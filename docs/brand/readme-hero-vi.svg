@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 560" role="img" aria-label="KeyGate: trợ lý AI xin KeyGate, bạn duyệt trên điện thoại, KeyGate chạy việc và trả kết quả đã che.">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b1324"/><stop offset="1" stop-color="#070b14"/></linearGradient>
+<radialGradient id="halo" cx="72%" cy="48%" r="45%"><stop offset="0" stop-color="#2563eb" stop-opacity=".35"/><stop offset="1" stop-color="#2563eb" stop-opacity="0"/></radialGradient>
+<radialGradient id="glow"><stop offset="0" stop-color="#2563eb" stop-opacity=".55"/><stop offset="1" stop-color="#2563eb" stop-opacity="0"/></radialGradient>
+<linearGradient id="gate" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1a2a4d"/><stop offset="1" stop-color="#0f1a30"/></linearGradient>
+<pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="#ffffff" stroke-opacity=".05"/></pattern>
+<clipPath id="r"><rect width="1280" height="560" rx="28"/></clipPath>
+<path id="p1" d="M196 240 L290 240"/><path id="p2" d="M370 206 C 420 206, 425 112, 476 112"/><path id="p3" d="M476 146 C 428 146, 420 226, 370 226"/><path id="p4" d="M370 262 C 420 262, 425 352, 476 352"/><path id="p5" d="M476 392 C 412 392, 392 290, 330 290 S 236 262, 196 262"/>
+</defs>
+<g clip-path="url(#r)">
+<rect width="1280" height="560" fill="url(#bg)"/><rect width="1280" height="560" fill="url(#grid)"/><rect width="1280" height="560" fill="url(#halo)"/>
+</g>
+<g font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif">
+<g transform="translate(72 150)">
+<rect width="56" height="56" rx="13" fill="#2563eb"/><g fill="#fff" transform="translate(26.7 28) rotate(-45) scale(.56)"><path fill-rule="evenodd" d="M-34.5 0a16.5 16.5 0 1 0 33 0a16.5 16.5 0 1 0 -33 0ZM-25 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0Z"/><rect x="-3" y="-5.2" width="39" height="10.4"/><rect x="22" y="0" width="6" height="15"/><rect x="31" y="0" width="5" height="12"/></g>
+<text x="76" y="44" font-size="46" font-weight="800" fill="#eef2f8" letter-spacing="-1">Key<tspan fill="#6f9dff">Gate</tspan></text>
+<text x="0" y="128" font-size="38" font-weight="700" fill="#eef2f8">Cho AI làm việc,</text>
+<text x="0" y="176" font-size="38" font-weight="700" fill="#eef2f8">giữ chìa khóa trong tay bạn.</text>
+<text x="0" y="230" font-size="19" fill="#9aa6ba">Agent chạy truy vấn, báo cáo, đồng bộ mà không bao giờ</text>
+<text x="0" y="258" font-size="19" fill="#9aa6ba">thấy mật khẩu. Mỗi lần dùng, bạn là người gật đầu.</text>
+</g>
+<g transform="translate(640 50)">
+<g fill="none" stroke="#ffffff" stroke-opacity=".18" stroke-width="2" stroke-dasharray="4 7"><use href="#p1"/><use href="#p2"/><use href="#p3"/><use href="#p4"/><use href="#p5"/></g>
+<rect x="40" y="186" width="156" height="112" rx="22" fill="#121d35" stroke="#ffffff" stroke-opacity=".16"/>
+<path d="M86 226 l6 14 14 6 -14 6 -6 14 -6 -14 -14 -6 14 -6z" fill="#eef2f8"/><path d="M120 222 l3 7 7 3 -7 3 -3 7 -3 -7 -7 -3 7 -3z" fill="#6f9dff"/>
+<rect x="114" y="250" width="56" height="7" rx="3.5" fill="#ffffff" fill-opacity=".22"/><rect x="114" y="263" width="38" height="7" rx="3.5" fill="#ffffff" fill-opacity=".14"/>
+<text x="118" y="328" text-anchor="middle" font-size="16" font-weight="600" fill="#eef2f8">Trợ lý AI</text>
+<text x="118" y="348" text-anchor="middle" font-size="12.5" fill="#9aa6ba">không cầm mật khẩu</text>
+<rect x="476" y="30" width="112" height="190" rx="20" fill="#0d1628" stroke="#ffffff" stroke-opacity=".22" stroke-width="2"/>
+<rect x="514" y="40" width="36" height="6" rx="3" fill="#ffffff" fill-opacity=".18"/><rect x="490" y="62" width="84" height="74" rx="10" fill="#16223d"/>
+<rect x="498" y="72" width="16" height="16" rx="4" fill="#2563eb"/><text x="520" y="85" font-size="11" font-weight="600" fill="#eef2f8">KeyGate</text>
+<text x="498" y="106" font-size="10" fill="#9aa6ba">AI xin chạy</text><text x="498" y="122" font-size="10" fill="#9aa6ba">báo cáo TEST</text>
+<rect x="490" y="150" width="84" height="30" rx="15" fill="#2563eb"/><text x="532" y="170" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">Cho phép</text>
+<circle cx="532" cy="165" r="15" fill="none" stroke="#6f9dff" stroke-width="2" opacity="0"><animate attributeName="r" values="15;15;15;34;34" keyTimes="0;.36;.37;.47;1" dur="8s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0;.9;0;0" keyTimes="0;.36;.37;.47;1" dur="8s" repeatCount="indefinite"/></circle>
+<text x="532" y="244" text-anchor="middle" font-size="14" font-weight="600" fill="#eef2f8">Bạn gật đầu</text>
+<g fill="#121d35" stroke="#ffffff" stroke-opacity=".2" stroke-width="1.5"><path d="M486 312 v80 a46 13 0 0 0 92 0 v-80"/><ellipse cx="532" cy="312" rx="46" ry="13"/></g>
+<path d="M486 340 a46 13 0 0 0 92 0 M486 366 a46 13 0 0 0 92 0" fill="none" stroke="#ffffff" stroke-opacity=".14" stroke-width="1.5"/>
+<text x="532" y="436" text-anchor="middle" font-size="14" font-weight="600" fill="#eef2f8">Hệ thống công ty</text><text x="532" y="455" text-anchor="middle" font-size="12" fill="#9aa6ba">Oracle, API, SSH…</text>
+<circle r="6" fill="#eef2f8"  opacity="0"><animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.02;0.15;1" calcMode="linear"><mpath href="#p1"/></animateMotion><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.02;0.03;0.15;0.16;1" dur="8s" repeatCount="indefinite"/></circle>
+<circle r="6" fill="#6f9dff"  opacity="0"><animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.18;0.33;1" calcMode="linear"><mpath href="#p2"/></animateMotion><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.18;0.19;0.33;0.34;1" dur="8s" repeatCount="indefinite"/></circle>
+<circle r="6" fill="#2563eb" stroke="#fff" stroke-width="2" opacity="0"><animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.46;0.58;1" calcMode="linear"><mpath href="#p3"/></animateMotion><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.46;0.47;0.58;0.59;1" dur="8s" repeatCount="indefinite"/></circle>
+<circle r="6" fill="#eef2f8"  opacity="0"><animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.61;0.72;1" calcMode="linear"><mpath href="#p4"/></animateMotion><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.61;0.62;0.72;0.73;1" dur="8s" repeatCount="indefinite"/></circle>
+<circle r="6" fill="#eef2f8"  opacity="0"><animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.76;0.95;1" calcMode="linear"><mpath href="#p5"/></animateMotion><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.76;0.77;0.95;0.96;1" dur="8s" repeatCount="indefinite"/></circle>
+<circle cx="330" cy="240" r="120" fill="url(#glow)"><animate attributeName="r" values="110;128;110" dur="4s" repeatCount="indefinite"/></circle>
+<rect x="282" y="140" width="96" height="200" rx="26" fill="url(#gate)" stroke="#2563eb" stroke-width="2"/>
+<rect x="300" y="210" width="60" height="60" rx="14" fill="#2563eb"/><g fill="#fff" transform="translate(328.6 240) rotate(-45) scale(.6)"><path fill-rule="evenodd" d="M-34.5 0a16.5 16.5 0 1 0 33 0a16.5 16.5 0 1 0 -33 0ZM-25 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0Z"/><rect x="-3" y="-5.2" width="39" height="10.4"/><rect x="22" y="0" width="6" height="15"/><rect x="31" y="0" width="5" height="12"/></g>
+<text x="330" y="370" text-anchor="middle" font-size="16" font-weight="700" fill="#eef2f8">KeyGate</text>
+<text x="330" y="390" text-anchor="middle" font-size="12.5" fill="#9aa6ba">chìa khóa ở lại đây</text>
+</g>
+</g>
+</svg>
