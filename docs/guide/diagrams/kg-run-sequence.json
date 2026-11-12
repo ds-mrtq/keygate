@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Một lần `kg run` có xin duyệt",
+    "locale": "vi",
+    "output": "docs/guide/diagrams/kg-run-sequence.html",
+    "quality_profile": "showcase"
+  },
+  "participants": [
+    { "id": "agent", "type": "external", "label": "AI agent", "sublabel": "người gọi lệnh" },
+    { "id": "kg", "type": "frontend", "label": "CLI kg", "sublabel": "kg run" },
+    { "id": "broker", "type": "backend", "label": "Broker", "sublabel": "khay kgw tray" },
+    { "id": "hello", "type": "security", "label": "Windows Hello", "sublabel": "xác nhận tại máy" },
+    { "id": "relay", "type": "cloud", "label": "Relay", "sublabel": "Cloudflare" },
+    { "id": "phone", "type": "frontend", "label": "Điện thoại", "sublabel": "PWA" },
+    { "id": "child", "type": "backend", "label": "Tiến trình con", "sublabel": "sql / python" }
+  ],
+  "segments": [
+    { "from": 150, "to": 300, "label": "Gửi yêu cầu" },
+    { "from": 310, "to": 700, "label": "Xin duyệt" },
+    { "from": 710, "to": 960, "label": "Chạy và trả đầu ra" },
+    { "from": 970, "to": 1090, "label": "Nhánh: chờ quá lâu" }
+  ],
+  "messages": [
+    { "id": "m1", "from": "agent", "to": "kg", "y": 170, "label": "kg run --secret ebs/test/apps -- sql …", "variant": "emphasis", "note": "Lệnh đầy đủ: sql /@ebs_test @smoke/smoke_select.sql" },
+    { "id": "m2", "from": "kg", "to": "broker", "y": 250, "label": "yêu cầu qua broker.sock", "variant": "default", "note": "Chỉ gồm tên secret và argv. Broker tự kiểm: policy khớp pin, PROD mặc định từ chối, allowlist chương trình + mẫu tham số, grant đã có chưa." },
+    { "id": "m3", "from": "broker", "to": "hello", "y": 360, "label": "hiện Windows Hello", "variant": "security", "note": "Chưa có grant và không trong phiên làm việc; màn hình đang mở." },
+    { "id": "m4", "from": "broker", "to": "relay", "y": 440, "label": "đẩy yêu cầu (ký + mã hóa)", "variant": "dashed", "note": "Khi Hello chưa trả lời sau 15 giây, hoặc màn hình đang khóa." },
+    { "id": "m5", "from": "relay", "to": "phone", "y": 520, "label": "Web Push", "variant": "dashed" },
+    { "id": "m6", "from": "phone", "to": "relay", "y": 580, "label": "quyết định đã ký", "variant": "security", "note": "Người dùng chọn Cho phép / Cho phép và mở phiên / Từ chối." },
+    { "id": "m7", "from": "relay", "to": "broker", "y": 660, "label": "chuyển quyết định về Broker", "variant": "return" },
+    { "id": "m8", "from": "broker", "to": "child", "y": 730, "label": "dựng môi trường tạm, chạy", "variant": "emphasis", "note": "Lưu grant bền vào state/grants.json, ghi audit run-start (ghi lỗi = không chạy). Giải mã secret, dựng KG_HOME/run/ và wallet Oracle tạm." },
+    { "id": "m9", "from": "child", "to": "broker", "y": 850, "label": "stdout / stderr", "variant": "return", "note": "Broker che giá trị (nguyên văn, base64, URL-encode) thành [kg:<tên>], rồi dọn file tạm." },
+    { "id": "m10", "from": "broker", "to": "kg", "y": 940, "label": "đầu ra đã che + mã thoát", "variant": "return" },
+    { "id": "m11", "from": "kg", "to": "agent", "y": 1000, "label": "đầu ra đã che + mã thoát", "variant": "return" },
+    { "id": "m12", "from": "kg", "to": "agent", "y": 1070, "label": "đang chờ duyệt trên điện thoại, thoát mã 75", "variant": "dashed", "note": "Chờ quá 270 giây (pending). Duyệt sau đó có hiệu lực 10 phút cho lần chạy lại cùng yêu cầu." }
+  ],
+  "activations": [
+    { "participant": "kg", "from": 165, "to": 1000, "type": "frontend" },
+    { "participant": "broker", "from": 245, "to": 945, "type": "backend" },
+    { "participant": "hello", "from": 355, "to": 400, "type": "security" },
+    { "participant": "relay", "from": 435, "to": 665, "type": "cloud" },
+    { "participant": "phone", "from": 515, "to": 600, "type": "frontend" },
+    { "participant": "child", "from": 725, "to": 855, "type": "backend" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Đường tắt",
+      "items": [
+        "Có grant bền hoặc đang trong phiên làm việc thì bỏ qua bước xin duyệt (Hello, Relay, điện thoại)",
+        "Broker vẫn kiểm policy và allowlist trước khi chạy"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Quá 270 giây",
+      "items": [
+        "kg in \"đang chờ duyệt trên điện thoại\" và thoát mã 75",
+        "Duyệt muộn có hiệu lực 10 phút cho lần chạy lại cùng yêu cầu"
+      ]
+    }
+  ]
+}

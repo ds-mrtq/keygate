@@ -1,0 +1,108 @@
+# CLI `kg`: tóm tắt cách dùng
+
+Mọi lệnh đọc `KG_HOME` (mặc định `~/.keygate`). Không có `kg get`. **Không giá trị secret nào đi qua socket** (cả hai chiều); giá trị chỉ xuất hiện ở terminal/hộp thoại của broker (`kg set` nhập, `kg reveal` hiển thị). Thông điệp lỗi: `kg: <lý do>`, mã thoát 1 (`run`/`resolve` trả mã thoát của tiến trình con; `hook check` chặn = 2; **75 = `pending`**: yêu cầu đang chờ duyệt trên điện thoại, duyệt xong chạy lại lệnh).
+
+Tham số có thể đặt trước hoặc sau đối số vị trí. Lệnh chạy tiến trình con dùng `--` để tách: `kg run --secret A -- lệnh args…`.
+
+Khi chạy test cần build tag: `go test -tags kgtest ./...` (backend khóa thiết bị `plain` chỉ có với tag này).
+
+## Nhóm A: cần broker đang chạy (`kg broker`)
+
+Client mỏng qua socket `KG_HOME/broker.sock`. Broker không chạy = từ chối (hỏng an toàn). Broker giữ khóa `KG_HOME/lock` khi đang mở; lệnh chủ (`device add|revoke`, `fingerprint`) báo "dừng broker (Ctrl+C trong cửa sổ broker) rồi chạy lại" nếu bị khóa.
+
+| Lệnh | Việc |
+|---|---|
+| `kg broker [--idle 0] [--lock-on-screen-lock] [--approval-wait 270s]` | Chạy foreground trong terminal của bạn. Lắng nghe socket trước, rồi mở khóa nền (Windows Hello / Touch ID; Linux nhập mật khẩu thiết bị tại TTY broker); Hello bị từ chối thì broker vẫn chạy ở trạng thái khóa. Khi start dọn `KG_HOME/run/`. **Mặc định không tự khóa** (`--idle 0`, không khóa theo khóa màn hình): Win+L không đổi gì với agent. `--idle <thời lượng>` bật tự khóa khi rảnh (ngoài phiên); `--lock-on-screen-lock` khóa khi khóa màn hình (ngoài phiên). `--approval-wait` là thời gian một lệnh chờ người duyệt trước khi nhận `pending` (mặc định 270 giây, dưới giới hạn 300 giây của tool agent). Khóa xong xóa vault key, nhả `KG_HOME/lock`, xóa mọi grant tạm (grant bền còn). |
+| `kgw tray` (= `kg tray`, Windows) | Broker không terminal: icon khay hệ thống (xám = khóa, xanh dương = đã mở, xanh lá = phiên, cam = có yêu cầu chờ), menu: mở khóa + mở phiên, kết thúc phiên, khóa, thêm secret (hộp thoại nhập giá trị ẩn), **Thiết bị…** (danh sách thiết bị kèm cột `Nguồn lúc ghép` (IP · nơi · nhà mạng · loại máy của request gửi mã ghép, relay ghi), `Hoạt động gần nhất` (request có chữ ký gần nhất trên relay), `Ghép lúc`: giờ audit `device-add`, máy tạo vault lấy giờ genesis, thiết bị ghép trước khi có audit hiện "không rõ"; `Ghép điện thoại…`: QR + ô mã ghép 8 ký tự → `Tiếp` → hộp so 6 từ `Đúng, thêm thiết bị` → hộp Win32 mật khẩu chủ + khóa giấy; `Thu hồi`: Windows Hello tại máy; điện thoại duyệt chỉ cần Hello (sự kiện `revoke-approver` ký bằng khóa máy này, không đổi epoch), thiết bị đầy đủ thì thêm mật khẩu chủ + khóa giấy (`revoke` + epoch mới, mã hóa lại); trước đó kéo sync, sau đó đẩy sync; không cần terminal, không cần `kg lock`, vault phải đang mở; tên secret cần đổi ghi `broker.log`; audit `device-add`/`device-revoke`), nhật ký, thoát. Log ở `KG_HOME/broker.log` (xoay ở 1 MiB). Build: `go build -ldflags "-H=windowsgui" -o "$(go env GOPATH)/bin/kgw.exe" ./cmd/kg`; tự chạy khi đăng nhập qua `tools/install-autostart.ps1`. `kg reveal` hiện giá trị trong hộp thoại tự đóng sau 60 giây. |
+| `kg status` | Trạng thái khóa, thiết bị, vault, epoch, policy có khớp pin không, xung đột, grant còn hạn, **ghim genesis**, dòng `Điện thoại duyệt: N thiết bị \| yêu cầu chờ: M` (số thiết bị duyệt đã ghép, số yêu cầu đang hiện trên điện thoại). |
+| `kg grants` / `kg grants revoke <secret>` / `kg grants revoke --all` | Liệt kê grant đang nhớ (secret, mẫu lệnh, kiểu duyệt, `by=hello\|paste:<dev>\|remote:<dev>\|session\|none`, lúc cấp, hạn, bền hay tạm) hoặc thu hồi: không cần mở khóa, không hỏi duyệt (chỉ giảm quyền); ghi audit `grant-revoke` khi vault đang mở. Grant bền là grant cấp sau duyệt tường minh (Hello, chữ ký dán, điện thoại); grant trong phiên và `approval: none` chỉ ở RAM. `policy apply` xóa grant bền của mục `allow_commands` không còn trong policy mới. |
+| `kg lock` | Khóa ngay (đồng thời kết thúc phiên làm việc). |
+| `kg session start` / `kg session end` | **Phiên làm việc**: Hello lúc `kg broker` start đã mở một phiên; `start` mở lại sau khi `end` (một lần Hello; nếu broker đang khóa thì Hello mở khóa cũng là Hello mở phiên). Trong phiên, grant có policy `user-presence`/`device` được cấp không hỏi cho mọi secret, kể cả PROD có grant đúng tên; `approval: deny` và PROD mặc định vẫn từ chối; pin/allowlist/kind không đổi; audit `approval=session`. Phiên không hết hạn; khóa màn hình không đổi gì (mặc định broker không tự khóa). Vẫn luôn hỏi: `policy apply`, `reveal`, `delete`, ghi đè secret (`set`/`import`), `compare`, `resolve-conflict`, lệnh chủ. `end` không hỏi, chỉ xóa grant của phiên (grant bền do Hello/điện thoại cấp vẫn còn). `kg status` hiện trạng thái phiên và giờ bắt đầu. |
+| `kg hash <file>` | In `sha256:<hex>` của file (file thường, không symlink, <= 16 MiB) để ghim vào policy. |
+| `kg list` | Tên, env, kind, lần chạy gần nhất (từ audit đã kiểm), cờ xung đột. Không có giá trị. |
+| `kg set <tên> [--kind env\|file\|oracle-wallet\|template] [--env test\|dev\|prod] [--env-name X] [--tns-alias A --user U] [--file-ext e] [--desc …] [--tags a,b] [--from-file f]` | Chỉ gửi metadata. **Broker hỏi giá trị (ẩn) trên TTY của chính nó** (đó là bước xác nhận người). Ghi đè secret đã có cần thêm duyệt người; `--from-file` cũng cần duyệt (broker tự đọc file). `env_name` phải hợp lệ và không thuộc nhóm biến nạp mã. Tên trông như PROD mà `--env` không phải prod thì broker cảnh báo (policy vẫn coi là PROD theo tên). |
+| `kg import --dotenv f.env \| --gitleaks report.json [--prefix llm/] [--env dev] [--rewrite]` | Chỉ gửi đường dẫn; **broker tự đọc file** sau khi duyệt người (hiện số secret, số tên bị ghi đè), tự ghi lại file nếu `--rewrite`, chỉ trả về tên. |
+| `kg import --dotenv f.env --prefix p --compare` | Không ghi gì. Broker (sau khi duyệt người, vì đọc file thật và giải mã) phân tích file bằng cùng bộ phân tích/cách đặt tên như import, rồi chỉ in trạng thái từng khóa: `same` (giá trị vault giống từng byte), `diff`, `missing`; `extra` = tên trong vault dưới prefix mà file không có; `unparsed line N` = dòng không phải `KEY=VALUE` (không in nội dung dòng). Không bao giờ in giá trị; audit `compare`. |
+| `kg run --secret A [--secret B] [--as env\|file\|wallet] [--dir D] -- cmd args…` | Broker kiểm policy + pin + allowlist + grant, kiểm policy/allowlist cho **mọi** secret trước, rồi chỉ **một** lần duyệt người cho cả lô secret chưa có grant (liệt kê tên, đã làm sạch, cắt độ dài; mỗi grant sau một lần duyệt tường minh được **lưu đĩa** `KG_HOME/state/grants.json` (MAC) và còn đến khi thu hồi, kể cả qua khóa/restart/hết phiên; chỉ hết hạn khi policy ghi `ttl:`), ghi audit "bắt đầu" (ghi lỗi = không chạy), giải mã, dựng môi trường tạm dưới `KG_HOME/run/`, chạy **đúng chương trình đã phân giải** và trả đầu ra đã che (`[kg:<tên>]`, stdout+stderr gộp một luồng) cùng mã thoát. Diệt cả cây tiến trình khi hủy/quá `max_runtime`. |
+| `kg resolve <file> [--into ENV] [--secret …] -- cmd…` | Thay `${secret:NAME}` trong file, ghi file tạm, đặt `KG_RESOLVED` (hoặc `--into`) rồi chạy lệnh. Chỉ dùng được với secret mà policy cho phép kind `template`. |
+| `kg delete <tên> [<tên>...]` | Xóa (tombstone) một hay nhiều secret theo tên chính xác. Một lần duyệt người cho cả lô (hộp thoại liệt kê tên, đã làm sạch, cắt độ dài); tên không tồn tại = lỗi trước khi ghi gì (tất cả hoặc không gì); audit `delete` cho từng tên. |
+| `kg same <a> <b> [<c> ...]` | So giá trị giải mã của mọi tên với tên đầu (so sánh thời gian hằng), chỉ in `same`/`diff` từng cặp, không bao giờ in giá trị. Luôn Hello (kể cả trong phiên làm việc); audit `same`. |
+| `kg cp <nguồn> <đích> [<nguồn2> <đích2> ...] [--env-name X]` | Tạo secret đích từ nguồn (giá trị, kind, env, tns, user, file_ext, desc, tags; `--env-name` ghi đè env_name của mọi đích) ngay trong broker. Từ chối nếu đích đã tồn tại (không ghi đè, kể cả trùng đích trong cùng lô); tên đích kiểm như `set` (kèm cảnh báo tên giống PROD). Một Hello cho cả lô, kể cả trong phiên; audit `copy`. |
+| `kg grant <secret> -- cmd…` | Xin grant trước (duyệt người nếu policy đòi). |
+| `kg reveal <tên>` | Duyệt người, rồi **hiện giá trị trên cửa sổ broker** (không trả về client). Bị từ chối thì khóa 60 giây. Hook chặn với agent. |
+| `kg policy apply` | Đọc `policy.yaml`, in **diff từng grant** và cảnh báo (`approval: none`, glob/wildcard, khóa PROD) trên cửa sổ broker, người duyệt, ghi `state/policy.pin` (phiên bản tăng dần, MAC), xóa mọi grant đang nhớ. Lệch pin/phiên bản lùi = từ chối mọi grant. |
+| `kg mcp` | MCP server qua stdio (`list_secrets`, `request_grant`, `run_with_secret`), gọi broker. |
+| `kg conflicts` / `kg resolve-conflict <tên> --keep <dev\|hash>` | Xem và giải quyết xung đột; giải quyết cần duyệt người. Broker từ chối cấp secret đang xung đột. |
+| `kg sync [--via dir\|git\|relay] [--verify-via git]` | Qua broker nếu chạy, không thì trực tiếp. |
+
+**Duyệt từ điện thoại** (thiết bị vai trò `approver`, ghép bằng `kg device pair-url` + `kg device add --pair <mã>`). Chỉ có hiệu lực khi vault đã ghép ít nhất một thiết bị duyệt và broker có `relay_url`:
+
+- Mọi lần broker cần người duyệt (kể cả `policy apply`, `delete`, `import`, `compare`, `resolve-conflict`, mở khóa, mở phiên): màn hình đang mở thì Windows Hello hiện trước và điện thoại chỉ được hỏi sau 15 giây nếu Hello chưa trả lời; màn hình đang khóa thì hỏi điện thoại ngay. `reveal`, ghi đè secret (`set`/`import`), `same`, `cp` và nhập giá trị bằng hộp thoại luôn chỉ làm tại máy.
+- Điện thoại chọn `Cho phép` (cấp grant bền, nhớ đến khi thu hồi), `Cho phép và mở phiên` hoặc `Từ chối`. Quyết định ràng buộc vào bản băm của yêu cầu (op, secret, lệnh, diff, dữ liệu sẽ áp dụng) và dùng một lần: file `.env`/`policy.yaml` đổi sau khi duyệt thì lần chạy lại tạo yêu cầu mới.
+- Lệnh chờ quá `--approval-wait` thì in `kg: đang chờ duyệt trên điện thoại (KeyGate, yêu cầu <6 ký tự>)` ngay lúc yêu cầu được đưa lên điện thoại, và kết thúc bằng mã **75** (`pending`) khi hết hạn chờ. Yêu cầu vẫn mở trên điện thoại; duyệt sau đó có hiệu lực 10 phút cho lần chạy lại **cùng** yêu cầu (không hỏi lại, không thông báo mới).
+- Trong phiên làm việc, hoặc với grant bền đã có, `kg run`/`kg resolve`/MCP chạy ngay: không Hello, không yêu cầu điện thoại, không push, kể cả khi khóa màn hình.
+- Điện thoại cũng gửi được lệnh khóa, mở khóa + phiên, kết thúc phiên, thu hồi grant, thêm secret (giá trị niêm phong riêng cho máy này, không vào log/audit/view).
+
+Biến môi trường: `KG_AGENT` (nhãn người gọi tự khai, ghi vào audit; broker còn ghi `peer` = PID/đường dẫn tiến trình gọi khi OS cho biết: Windows, Linux đầy đủ; macOS chỉ PID), `KG_HOME`.
+
+## Nhóm B: lệnh độc lập (không cần broker)
+
+| Lệnh | Việc |
+|---|---|
+| `kg init --label <nhãn> [--dir D \| --git-dir G \| --relay-url U]` | Hỏi mật khẩu chủ (2 lần, ẩn, >= 12 ký tự), sinh khóa thiết bị, khóa giấy (in một lần), ghi genesis + add + epoch 1. Có kênh thì đẩy lên luôn (relay: ký bằng khóa owner; `ErrExists` khác nội dung = `ErrForkChannel`). Cấu hình Oracle không còn ở `vault.json` (xem mục policy). |
+| `kg sync [--via … --dir D --git-dir G --relay-url U --vault vlt_… --pin … --verify-via git]` | Kéo, kiểm tra, đẩy phần mới, ghi checkpoint. Máy mới: lần đầu cần `--vault` và `--pin` (in bởi `kg device add`/`kg status` từ máy tin cậy), sau đó lưu cấu hình kênh vào `vault.json`. |
+| `kg fingerprint` | 6 từ fingerprint trạng thái đã kiểm; hỏi broker nếu đang chạy, không thì mở thẳng KG_HOME. |
+| `kg device request --label <nhãn>` | Máy mới: sinh khóa, in mã đăng ký (base32) và 6 từ xác nhận. |
+| `kg device add <mã>` | Máy cũ: so 6 từ, gõ `yes`, nhập mật khẩu chủ + khóa giấy; ghi `add` + bọc vault key; in vault ID + ghim genesis cho máy mới. Dừng broker trước (hoặc dùng khay `Thiết bị…` khi broker đang chạy). |
+| `kg device revoke <dev> [--reason …]` | Thiết bị duyệt: chỉ hỏi Windows Hello, ghi `revoke-approver` ký bằng khóa máy này. Thiết bị đầy đủ: đòi mật khẩu chủ + khóa giấy; ghi `revoke` + epoch mới, mã hóa lại mọi item, in danh sách secret cần đổi. Dừng broker trước (hoặc dùng khay `Thiết bị…`). |
+| `kg channel add --relay-url U \| --git-dir G \| --dir D` | Lệnh chủ: gắn kênh đồng bộ cho vault đã tạo bằng `kg init` không kênh. Đòi mật khẩu chủ + khóa giấy (sai = `ErrWrongKeys`), lưu kênh vào `vault.json`, với relay đẩy genesis và các sự kiện thành viên đầu tiên ký bằng khóa owner, rồi sync. Dừng broker trước. |
+| `kg recover --from <thư mục\|URL relay> [--git] --label <nhãn> [--vault vlt_… --members-file members.kgl]` | Đòi mật khẩu chủ + khóa giấy, khôi phục vault vào máy mới. Từ relay cần `--vault` và `--members-file` (genesis chứa salt Argon2). |
+| `kg approve <challenge>` | Máy khác duyệt giúp broker (approval `device`): hiện nội dung (đã bỏ ký tự điều khiển), đòi duyệt người, in chuỗi chữ ký `kga1.…` để dán vào TTY broker. |
+| `kg audit verify` | Kiểm chuỗi hash, MAC từng dòng và **neo đầu chuỗi** (cắt đuôi/xóa file bị phát hiện). |
+| `kg audit show [--since 7d]` | Kiểm như trên rồi mới liệt kê (sự kiện, secret, env, agent tự khai, peer, mã thoát, argv dạng mảng đã làm sạch). |
+| `kg hook check` | Đọc JSON PreToolUse từ stdin. Chặn: in lý do ra stderr, thoát 2; đầu vào hỏng: thoát 2. |
+
+## Policy (`KG_HOME/policy.yaml`)
+
+```yaml
+oracle:                       # được ghim cùng policy; không đọc từ vault.json
+  java: C:/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot/bin/java.exe
+  pki_jar: C:/Users/me/AppData/Local/Programs/Oracle/SQLcl/current/lib/oraclepki.jar
+  tns_admin: C:/DevSuiteHome_1/network/admin
+grants:
+  ebs/test/*:
+    kind: oracle-wallet
+    tns_alias: ebs_test
+    allow_commands: ["sql /@ebs_test @path:D:/repos/x/sql/**/*.sql", "python path:D:/repos/x/scripts/**/*.py"]
+    approval: user-presence   # user-presence | device | none | deny
+    ttl: 30m                  # bỏ dòng này = grant không hết hạn (tới khi `kg grants revoke`)
+    max_runtime: 10m          # mặc định 30m
+    allow_as: [env]           # kind mà --as được chuyển sang (không bao giờ áp cho oracle-wallet)
+```
+
+- Chuỗi trong ngoặc kép: `\"` và `\\` là escape, mọi dấu `\` khác giữ nguyên (đường dẫn Windows dùng được); nên ưu tiên dấu `/`.
+- Khóa là tên secret chính xác hoặc glob; khớp chính xác thắng glob. `env_name` phải khớp `^[A-Za-z_][A-Za-z0-9_]*$` và không thuộc `PATH`, `LD_*`, `DYLD_*`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS`, `NODE_OPTIONS`, `PYTHON*`, `PERL5*`, `RUBY*`, `SQLPATH`, `TNS_ADMIN`, `CLASSPATH`, `BASH_ENV`, `PSModulePath`, `COMSPEC`…
+- PROD mặc định bị từ chối: `env` là prod/prd/production hoặc tên có đoạn `prod`/`prd` ở bất kỳ vị trí; chỉ mở bằng grant ghi **đúng tên** với `approval: user-presence`.
+- `allow_commands`, mỗi mục là `<chương trình> [mẫu tham số…] [!exact]`:
+  - Chương trình là **tên trần** (`sql`) hoặc đường dẫn tuyệt đối. Broker phân giải **một lần** bằng `PATH` của chính nó (EvalSymlinks) và chạy đúng đường dẫn đó. Request phải dùng tên trần (không phân biệt hoa/thường, `.exe` tùy chọn) hoặc đúng đường dẫn đã phân giải; mọi đường dẫn khác bị từ chối. Grant được nhớ theo (secret, mục, đường dẫn đã phân giải); hộp thoại duyệt hiện đường dẫn thật.
+  - Mẫu tham số khớp theo vị trí; `*` không vượt dấu `/`, `**` thì có; tham số chứa `..` không khớp mẫu có glob. Mẫu `path:/abs/**/*.py` (hoặc `@path:…` cho tham số dạng `@file`) so sau `Abs/Clean/EvalSymlinks` và phải là đường dẫn tuyệt đối. Token có khoảng trắng đặt trong `"…"`. Không có `!exact` thì tham số thừa sau các mẫu vẫn được; có `!exact` thì không.
+  - Luôn chặn (kể cả khi đích đã phân giải là chúng): `cmd fish csh tcsh busybox ash wsl nu env xargs nohup start`.
+  - Shell chỉ chạy được **một script đã ghim**: `bash sh zsh dash ksh powershell pwsh`. Mục phải có mẫu tham số đầu tiên là `path:<đường dẫn tuyệt đối của đúng một file>` (không glob `* ? [`), ví dụ `"bash path:D:/repos/x/scripts/renew-cert.sh !exact"`. Request phải là `bash <đúng script đó> [tham số]`, không tùy chọn nào đứng trước (`-c -s -i --init-file --rcfile -o +o` bị cấm), script phải là file thường (không symlink). Broker chạy `bash --noprofile --norc <script>` (sh/dash/ksh/zsh: `<exe> <script>`; powershell/pwsh: `-NoProfile -NonInteractive -ExecutionPolicy Bypass -File <script>`) và bỏ `BASH_ENV`, `ENV` khỏi môi trường con. Hộp thoại duyệt hiện đường dẫn shell đã phân giải và đường dẫn script. Nếu `bash` trên PATH của broker là WSL (`C:\Windows\System32\bash.exe`), hãy ghi đường dẫn tuyệt đối của Git Bash: `"C:/Program Files/Git/bin/bash.exe path:… !exact"`. Trình thông dịch (`python* node perl ruby php deno bun lua`…): `argv[1]` phải là script khớp mẫu đầu tiên, cấm mọi tùy chọn đứng trước.
+  - "Script host" `sql sqlplus sqlcl java javaw make git ssh scp sftp find go` bắt buộc có ít nhất một mẫu tham số (policy sai bị từ chối khi nạp).
+  - `sql`/`sqlcl`: broker luôn chèn `-R 4` (chặn `host`, `!`, `script`, `spool`, `@` lồng nhau) và cấm `-R` do request đưa vào; `sqlplus`: `-R 3`. Chi tiết đo ở `docs/DESIGN-notes-sqlcl.md`.
+- `--as`: không bao giờ đổi kind của `oracle-wallet`; kind khác chỉ chuyển sang kind có trong `allow_as`. `resolve` chỉ cho secret có kind `template` (policy hoặc item).
+- Ghim hash: `"python path:D:/x/job.py sha256:<hex>"` (token ngay sau mẫu `path:` một file, không glob) hoặc `"D:/tools/t.exe sha256:<hex> args"` cho chính chương trình. Lệch hash = từ chối (báo hash hiện tại). `approval: none` **chỉ** hợp lệ khi mọi mục `allow_commands` của grant có ghim hash (lấy bằng `kg hash`); policy sai bị từ chối khi nạp. Còn khe TOCTOU giữa lúc băm và lúc chạy (file đổi trong khoảng đó).
+- Mỗi lần sửa `policy.yaml` phải `kg policy apply` (người duyệt trên cửa sổ broker sau khi xem diff).
+
+## Cấu hình `vault.json`
+
+`{"vault", "relay_url", "git_dir", "sync_dir"}`. Không còn `oracle.*`: mọi chương trình nhận secret hoặc do broker chạy lấy từ `policy.yaml` đã ghim. Wallet Oracle chỉ dựng khi policy hợp lệ và đã ghim; java/jar/`tnsnames.ora` lấy từ khối `oracle:`, thiếu thì dò: java = `JAVA_HOME` (>= 11), `C:/Program Files/Eclipse Adoptium/*`, `java` trên PATH; jar = `lib/oraclepki.jar` cạnh SQLcl (`sql` trên PATH); tns = `TNS_ADMIN`, `C:/DevSuiteHome_1/network/admin`, `$ORACLE_HOME/network/admin`.
+
+## Ghi chú thiết kế
+
+- Vật liệu tạm (file, wallet) nằm dưới `KG_HOME/run/` (0700, hook chặn đường dẫn này), ghi đè nội dung trước khi xóa, dọn sót lúc broker start. Cây tiến trình con bị diệt bằng Job Object (Windows) hoặc process group (unix, thêm `Pdeathsig` trên Linux); `WaitDelay` 3 giây; `max_runtime` mặc định 30 phút.
+- Audit: ledger có hash chuỗi + MAC từng dòng; đầu chuỗi (hash + số dòng) neo trong `state/audit.head` có MAC. Chưa đưa neo vào checkpoint đồng bộ; kẻ xóa **cả** ledger lẫn neo cùng lúc vẫn không bị phát hiện cục bộ.
+- Số phiên bản pin chỉ được kiểm là không lùi so với phiên bản broker đã thấy kể từ lúc chạy (RAM); khôi phục cặp policy+pin cũ trước khi broker khởi động lại không bị bắt (cần neo ngoài tầm tay người dùng, ngoài phạm vi).
+- `conflicts`, `resolve-conflict`, `sync` đi qua broker vì chỉ broker giữ vault key; khi broker không chạy các lệnh này mở thẳng KG_HOME (không in giá trị; `resolve-conflict` tự đòi duyệt người).
+- Trên Linux không có user-presence: mở khóa dùng mật khẩu thiết bị tại TTY broker, các duyệt dùng `device`.
+- Terminal broker dùng một goroutine đọc duy nhất: duyệt `device` bị hủy không để lại reader nuốt dòng kế tiếp; dòng gõ trước khi có câu hỏi bị bỏ.

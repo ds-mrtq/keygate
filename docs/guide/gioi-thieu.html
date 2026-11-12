@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyGate: cho AI làm việc, giữ chìa khóa trong tay bạn</title>
+<meta name="description" content="KeyGate giúp trợ lý AI chạy báo cáo, truy vấn, đồng bộ dữ liệu mà không bao giờ thấy mật khẩu. Mỗi lần dùng, bạn là người gật đầu.">
+<link rel="icon" href="../brand/keygate.svg" type="image/svg+xml">
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #070b14; --navy: #0b1324; --deep: #0f1a30; --line: rgba(255,255,255,.10);
+    --fg: #eef2f8; --muted: #9aa6ba; --accent: #2563eb; --accent-soft: #6f9dff;
+    --font: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--ink); color: var(--fg); font: 17px/1.65 var(--font); -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  .wrap { width: min(1180px, 100% - 48px); margin: 0 auto; }
+
+  /* Header overlays the hero so the hero keeps the full first viewport */
+  header { position: absolute; inset: 0 0 auto 0; z-index: 5; }
+  header .wrap { display: flex; align-items: center; justify-content: space-between; height: 72px; }
+  .mark { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .2px; text-decoration: none; }
+  .mark img { width: 30px; height: 30px; }
+  header nav a { text-decoration: none; color: var(--muted); font-size: 15px; margin-left: 24px; }
+  header nav a:hover { color: var(--fg); }
+
+  /* Hero */
+  .hero { position: relative; min-height: 100svh; display: grid; align-items: center; overflow: hidden;
+    background:
+      radial-gradient(60% 70% at 72% 45%, rgba(37,99,235,.28), transparent 70%),
+      radial-gradient(40% 50% at 10% 90%, rgba(37,99,235,.10), transparent 70%),
+      linear-gradient(180deg, var(--navy), var(--ink)); }
+  .hero::before { content: ""; position: absolute; inset: 0;
+    background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 64px 64px; opacity: .35;
+    mask-image: radial-gradient(70% 70% at 65% 45%, #000 20%, transparent 75%); }
+  .hero .wrap { position: relative; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 32px; align-items: center; padding: 96px 0 56px; }
+  .hero .brand { font-size: clamp(56px, 8vw, 104px); line-height: .95; font-weight: 800; letter-spacing: -2px; margin: 0; color: var(--fg); max-width: none; }
+  .hero .brand span { color: var(--accent-soft); }
+  .hero h1 { font-size: clamp(24px, 2.6vw, 34px); line-height: 1.25; font-weight: 600; margin: 20px 0 14px; max-width: 18ch; }
+  .hero p { color: var(--muted); max-width: 36ch; margin: 0 0 32px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 14px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 13px 22px; border-radius: 999px; font-weight: 600; font-size: 16px;
+    text-decoration: none; transition: transform .2s ease, background .2s ease, border-color .2s ease; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #1d4fd8; transform: translateY(-2px); }
+  .btn-ghost { border: 1px solid rgba(255,255,255,.22); color: var(--fg); }
+  .btn-ghost:hover { border-color: var(--accent-soft); transform: translateY(-2px); }
+  .scene { width: 100%; height: auto; max-height: 76svh; }
+  .scene text { font-family: var(--font); }
+  .rise { opacity: 0; transform: translateY(18px); animation: rise .8s cubic-bezier(.2,.7,.2,1) forwards; }
+  .d1 { animation-delay: .05s } .d2 { animation-delay: .18s } .d3 { animation-delay: .32s } .d4 { animation-delay: .46s } .d5 { animation-delay: .3s }
+  @keyframes rise { to { opacity: 1; transform: none; } }
+
+  /* Sections */
+  section { padding: 120px 0; border-top: 1px solid var(--line); }
+  .eyebrow { color: var(--accent-soft); font-size: 14px; font-weight: 600; letter-spacing: 1.6px; text-transform: uppercase; margin: 0 0 14px; }
+  h2 { font-size: clamp(30px, 3.6vw, 46px); line-height: 1.15; letter-spacing: -.5px; margin: 0 0 18px; max-width: 22ch; }
+  .sub { color: var(--muted); max-width: 60ch; margin: 0; }
+  .reveal { opacity: 0; transform: translateY(28px); transition: opacity .8s ease, transform .8s cubic-bezier(.2,.7,.2,1); }
+  .reveal.in { opacity: 1; transform: none; }
+
+  /* Problem */
+  .problem .wrap { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 64px; align-items: center; }
+  .big { font-size: clamp(110px, 16vw, 200px); line-height: .85; font-weight: 800; letter-spacing: -6px; margin: 0;
+    background: linear-gradient(180deg, #fff, #6f9dff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .big-cap { color: var(--muted); margin: 18px 0 0; max-width: 30ch; }
+  .risks { list-style: none; padding: 0; margin: 28px 0 0; }
+  .risks li { padding: 16px 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: 32px 1fr; gap: 12px; }
+  .risks li:last-child { border-bottom: 1px solid var(--line); }
+  .risks b { display: block; }
+  .risks span { color: var(--muted); font-size: 15px; }
+  .risks svg { width: 24px; height: 24px; margin-top: 3px; color: var(--accent-soft); }
+
+  /* How: receptionist analogy */
+  .how { background: linear-gradient(180deg, var(--ink), var(--navy)); }
+  .steps { position: relative; display: grid; grid-template-columns: repeat(4, 1fr); gap: 32px; margin-top: 64px; }
+  .steps::before { content: ""; position: absolute; top: 27px; left: 28px; right: 28px; height: 2px; background: var(--line); }
+  .steps .bar { position: absolute; top: 27px; left: 28px; height: 2px; width: 0; background: var(--accent); transition: width 1.8s cubic-bezier(.4,0,.2,1); }
+  .steps.in .bar { width: calc(100% - 56px); }
+  .step { position: relative; }
+  .step .n { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 20px;
+    background: var(--deep); border: 2px solid var(--line); transition: background .4s ease, border-color .4s ease; }
+  .steps.in .step .n { background: var(--accent); border-color: var(--accent); }
+  .steps.in .step:nth-child(3) .n { transition-delay: .3s } .steps.in .step:nth-child(4) .n { transition-delay: .75s } .steps.in .step:nth-child(5) .n { transition-delay: 1.2s }
+  .step h3 { font-size: 20px; margin: 22px 0 8px; }
+  .step p { color: var(--muted); margin: 0; font-size: 16px; }
+  .step q { display: block; margin-top: 12px; font-size: 15px; color: var(--fg); font-style: italic; quotes: "“" "”"; }
+  .punch { margin: 72px 0 0; font-size: clamp(22px, 2.4vw, 30px); font-weight: 600; max-width: 30ch; }
+  .punch span { color: var(--accent-soft); }
+
+  /* Day timeline */
+  .day .wrap { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 7fr); gap: 64px; }
+  .day .intro { position: sticky; top: 96px; align-self: start; }
+  .times { list-style: none; margin: 0; padding: 0; }
+  .times li { display: grid; grid-template-columns: 96px 1fr; gap: 24px; padding: 28px 0; border-top: 1px solid var(--line); }
+  .times li:last-child { border-bottom: 1px solid var(--line); }
+  .times time { font-size: 28px; font-weight: 700; color: var(--accent-soft); font-variant-numeric: tabular-nums; }
+  .times h3 { margin: 4px 0 6px; font-size: 20px; }
+  .times p { margin: 0; color: var(--muted); }
+
+  /* Before / after */
+  .compare { width: 100%; border-collapse: collapse; margin-top: 48px; font-size: 16px; }
+  .compare th, .compare td { text-align: left; padding: 18px 16px; border-top: 1px solid var(--line); vertical-align: top; }
+  .compare thead th { border-top: 0; font-size: 14px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); }
+  .compare thead th:last-child { color: var(--accent-soft); }
+  .compare tbody th { font-weight: 600; width: 26%; }
+  .compare td:nth-child(2) { color: var(--muted); }
+  .compare td:last-child { color: var(--fg); }
+  .compare tr { transition: background .25s ease; }
+  .compare tbody tr:hover { background: rgba(37,99,235,.08); }
+  .compare code { font-family: "Cascadia Code", Consolas, monospace; font-size: 14px; color: var(--accent-soft); }
+
+  /* Assurances */
+  .calm { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 64px; margin-top: 48px; }
+  .calm div { padding: 26px 0; border-top: 1px solid var(--line); }
+  .calm h3 { margin: 0 0 6px; font-size: 20px; }
+  .calm p { margin: 0; color: var(--muted); }
+
+  /* Final CTA */
+  .final { text-align: center; padding: 140px 0 120px;
+    background: radial-gradient(50% 80% at 50% 100%, rgba(37,99,235,.30), transparent 70%), var(--ink); }
+  .final img { width: 72px; height: 72px; margin-bottom: 24px; }
+  .final h2 { margin: 0 auto 16px; }
+  .final .sub { margin: 0 auto 36px; }
+  .final .cta { justify-content: center; }
+  footer { color: var(--muted); font-size: 14px; padding: 28px 0; border-top: 1px solid var(--line); }
+
+  @media (max-width: 900px) {
+    .hero .wrap, .problem .wrap, .day .wrap { grid-template-columns: 1fr; }
+    .hero .wrap { padding-top: 104px; }
+    .scene { max-height: none; }
+    .steps { grid-template-columns: 1fr 1fr; }
+    .steps::before, .steps .bar { display: none; }
+    .calm { grid-template-columns: 1fr; }
+    .day .intro { position: static; }
+    section { padding: 80px 0; }
+    .compare thead { display: none; }
+    .compare tr { display: block; padding: 12px 0; border-top: 1px solid var(--line); }
+    .compare th, .compare td { display: block; border: 0; padding: 4px 0; width: auto !important; }
+    .compare td:nth-child(2)::before { content: "Trước: "; font-weight: 600; }
+    .compare td:last-child::before { content: "Với KeyGate: "; font-weight: 600; color: var(--accent-soft); }
+  }
+  @media (max-width: 560px) { .steps { grid-template-columns: 1fr; } header nav a:not(:last-child) { display: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .rise, .reveal { opacity: 1 !important; transform: none !important; animation: none !important; transition: none !important; }
+    .scene .flow { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="mark" href="#"><img src="../brand/keygate.svg" alt="">KeyGate</a>
+    <nav>
+      <a href="#van-de">Vì sao cần</a>
+      <a href="#cach-lam">Cách hoạt động</a>
+      <a href="index.html">Hướng dẫn sử dụng</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero" aria-label="Giới thiệu">
+  <div class="wrap">
+    <div>
+      <p class="brand rise d1">Key<span>Gate</span></p>
+      <h1 class="rise d2">Cho AI làm việc, giữ chìa khóa trong tay bạn.</h1>
+      <p class="rise d3">Trợ lý AI chạy báo cáo, truy vấn, đồng bộ dữ liệu mà không bao giờ thấy mật khẩu. Mỗi lần dùng, bạn là người gật đầu.</p>
+      <div class="cta rise d4">
+        <a class="btn btn-primary" href="#cach-lam">Xem cách hoạt động</a>
+        <a class="btn btn-ghost" href="index.html">Hướng dẫn sử dụng</a>
+      </div>
+    </div>
+
+    <svg class="scene rise d5" viewBox="0 0 640 480" role="img" aria-label="Trợ lý AI xin việc qua KeyGate, bạn bấm Cho phép trên điện thoại, KeyGate mở hệ thống công ty và trả kết quả cho AI. Chìa khóa không rời KeyGate.">
+      <defs>
+        <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+          <stop offset="0" stop-color="#2563eb" stop-opacity=".55"/>
+          <stop offset="1" stop-color="#2563eb" stop-opacity="0"/>
+        </radialGradient>
+        <linearGradient id="gate" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#1a2a4d"/><stop offset="1" stop-color="#0f1a30"/>
+        </linearGradient>
+        <path id="p1" d="M196 240 L290 240"/>
+        <path id="p2" d="M370 206 C 420 206, 425 112, 476 112"/>
+        <path id="p3" d="M476 146 C 428 146, 420 226, 370 226"/>
+        <path id="p4" d="M370 262 C 420 262, 425 352, 476 352"/>
+        <path id="p5" d="M476 392 C 412 392, 392 290, 330 290 S 236 262, 196 262"/>
+      </defs>
+
+      <!-- routes -->
+      <g fill="none" stroke="rgba(255,255,255,.18)" stroke-width="2" stroke-dasharray="4 7">
+        <use href="#p1"/><use href="#p2"/><use href="#p3"/><use href="#p4"/><use href="#p5"/>
+      </g>
+
+      <!-- AI assistant -->
+      <g>
+        <rect x="40" y="186" width="156" height="112" rx="22" fill="#121d35" stroke="rgba(255,255,255,.16)"/>
+        <path d="M86 226 l6 14 14 6 -14 6 -6 14 -6 -14 -14 -6 14 -6z" fill="#eef2f8"/>
+        <path d="M120 222 l3 7 7 3 -7 3 -3 7 -3 -7 -7 -3 7 -3z" fill="#6f9dff"/>
+        <rect x="114" y="250" width="56" height="7" rx="3.5" fill="rgba(255,255,255,.22)"/>
+        <rect x="114" y="263" width="38" height="7" rx="3.5" fill="rgba(255,255,255,.14)"/>
+        <text x="118" y="328" text-anchor="middle" font-size="16" font-weight="600" fill="#eef2f8">Trợ lý AI</text>
+        <text x="118" y="348" text-anchor="middle" font-size="12.5" fill="#9aa6ba">không cầm mật khẩu</text>
+      </g>
+
+      <!-- Phone -->
+      <g>
+        <rect x="476" y="30" width="112" height="190" rx="20" fill="#0d1628" stroke="rgba(255,255,255,.22)" stroke-width="2"/>
+        <rect x="514" y="40" width="36" height="6" rx="3" fill="rgba(255,255,255,.18)"/>
+        <rect x="490" y="62" width="84" height="74" rx="10" fill="#16223d"/>
+        <rect x="498" y="72" width="16" height="16" rx="4" fill="#2563eb"/>
+        <text x="520" y="85" font-size="11" font-weight="600" fill="#eef2f8">KeyGate</text>
+        <text x="498" y="106" font-size="10" fill="#9aa6ba">AI xin chạy</text>
+        <text x="498" y="122" font-size="10" fill="#9aa6ba">báo cáo TEST</text>
+        <g class="tap">
+          <rect x="490" y="150" width="84" height="30" rx="15" fill="#2563eb"/>
+          <text x="532" y="170" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">Cho phép</text>
+          <circle cx="532" cy="165" r="15" fill="none" stroke="#6f9dff" stroke-width="2" opacity="0">
+            <animate attributeName="r" values="15;15;15;34;34" keyTimes="0;.36;.37;.47;1" dur="8s" repeatCount="indefinite"/>
+            <animate attributeName="opacity" values="0;0;.9;0;0" keyTimes="0;.36;.37;.47;1" dur="8s" repeatCount="indefinite"/>
+          </circle>
+        </g>
+        <text x="532" y="244" text-anchor="middle" font-size="14" font-weight="600" fill="#eef2f8">Bạn gật đầu</text>
+      </g>
+
+      <!-- Company systems -->
+      <g>
+        <g fill="#121d35" stroke="rgba(255,255,255,.2)" stroke-width="1.5">
+          <path d="M486 312 v80 a46 13 0 0 0 92 0 v-80"/>
+          <ellipse cx="532" cy="312" rx="46" ry="13"/>
+        </g>
+        <path d="M486 340 a46 13 0 0 0 92 0 M486 366 a46 13 0 0 0 92 0" fill="none" stroke="rgba(255,255,255,.14)" stroke-width="1.5"/>
+        <text x="532" y="436" text-anchor="middle" font-size="14" font-weight="600" fill="#eef2f8">Hệ thống công ty</text>
+        <text x="532" y="455" text-anchor="middle" font-size="12" fill="#9aa6ba">EBS, Oracle, Mantis…</text>
+      </g>
+
+      <!-- moving dots: request, ask, approve, work, result -->
+      <g class="flow">
+        <circle r="6" fill="#eef2f8" opacity="0">
+          <animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;.02;.15;1" calcMode="linear"><mpath href="#p1"/></animateMotion>
+          <animate attributeName="opacity" values="0;1;1;0;0" keyTimes="0;.02;.15;.16;1" dur="8s" repeatCount="indefinite"/>
+        </circle>
+        <circle r="6" fill="#6f9dff" opacity="0">
+          <animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;.18;.33;1" calcMode="linear"><mpath href="#p2"/></animateMotion>
+          <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.18;.19;.33;.34;1" dur="8s" repeatCount="indefinite"/>
+        </circle>
+        <circle r="6" fill="#2563eb" stroke="#fff" stroke-width="2" opacity="0">
+          <animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;.46;.58;1" calcMode="linear"><mpath href="#p3"/></animateMotion>
+          <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.46;.47;.58;.59;1" dur="8s" repeatCount="indefinite"/>
+        </circle>
+        <circle r="6" fill="#eef2f8" opacity="0">
+          <animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;.61;.72;1" calcMode="linear"><mpath href="#p4"/></animateMotion>
+          <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.61;.62;.72;.73;1" dur="8s" repeatCount="indefinite"/>
+        </circle>
+        <g opacity="0">
+          <rect x="-15" y="-9" width="30" height="18" rx="5" fill="#eef2f8"/>
+          <rect x="-9" y="-3" width="18" height="2.5" fill="#0b1324"/><rect x="-9" y="2" width="12" height="2.5" fill="#0b1324"/>
+          <animateMotion dur="8s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;.76;.95;1" calcMode="linear"><mpath href="#p5"/></animateMotion>
+          <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.76;.77;.95;.96;1" dur="8s" repeatCount="indefinite"/>
+        </g>
+      </g>
+
+      <!-- The gate (drawn last so results pass "through" it) -->
+      <g>
+        <circle cx="330" cy="240" r="120" fill="url(#glow)">
+          <animate attributeName="r" values="110;128;110" dur="4s" repeatCount="indefinite"/>
+        </circle>
+        <rect x="282" y="140" width="96" height="200" rx="26" fill="url(#gate)" stroke="#2563eb" stroke-width="2"/>
+        <rect x="300" y="210" width="60" height="60" rx="14" fill="#2563eb"/>
+        <g fill="#fff" transform="translate(328.6 240) rotate(-45) scale(.6)">
+          <path fill-rule="evenodd" d="M-34.5 0a16.5 16.5 0 1 0 33 0a16.5 16.5 0 1 0 -33 0ZM-25 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0Z"/>
+          <rect x="-3" y="-5.2" width="39" height="10.4"/>
+          <rect x="22" y="0" width="6" height="15"/>
+          <rect x="31" y="0" width="5" height="12"/>
+        </g>
+        <text x="330" y="370" text-anchor="middle" font-size="16" font-weight="700" fill="#eef2f8">KeyGate</text>
+        <text x="330" y="390" text-anchor="middle" font-size="12.5" fill="#9aa6ba">chìa khóa ở lại đây</text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<section class="problem" id="van-de">
+  <div class="wrap">
+    <div class="reveal">
+      <p class="eyebrow">Vì sao cần</p>
+      <p class="big">228</p>
+      <p class="big-cap">mật khẩu và mã truy cập từng nằm trong 9 file cấu hình trên laptop, ở dạng chữ đọc được, trước khi chuyển vào KeyGate.</p>
+    </div>
+    <div class="reveal">
+      <h2>Trợ lý AI đọc được file nào, thì thấy được mật khẩu trong đó.</h2>
+      <p class="sub">Giống như dán chìa khóa nhà lên cửa tủ lạnh rồi nhờ người khác vào dọn dẹp. Không ai cố ý, nhưng chỉ cần một lần sơ suất.</p>
+      <ul class="risks">
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v11H8l-4 4z"/></svg>
+          <div><b>Lọt vào câu trả lời</b><span>AI chép nguyên mật khẩu vào đoạn chat, báo cáo hay tin nhắn gửi đi.</span></div>
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h9l3 3v15H6z M9 10h6 M9 14h6 M9 18h4"/></svg>
+          <div><b>Nằm lại trong nhật ký</b><span>Mật khẩu in ra màn hình rồi theo file log đi khắp nơi.</span></div>
+        </li>
+        <li>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          <div><b>Không ai biết đã dùng lúc nào</b><span>Không có sổ ghi AI đã dùng mật khẩu nào, vào hệ thống nào, vào giờ nào.</span></div>
+        </li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="how" id="cach-lam">
+  <div class="wrap">
+    <p class="eyebrow reveal">Cách hoạt động</p>
+    <h2 class="reveal">Như người giữ chìa khóa ở quầy lễ tân.</h2>
+    <p class="sub reveal">AI không được cầm chìa. Muốn vào đâu, AI phải hỏi KeyGate. KeyGate xem bạn có cho phép không rồi mới mở cửa giùm.</p>
+
+    <div class="steps" id="steps">
+      <div class="bar"></div>
+      <div class="step">
+        <div class="n">1</div>
+        <h3>AI xin vào</h3>
+        <p>AI nói rõ cần mật khẩu nào, để chạy việc gì.</p>
+        <q>Tôi cần vào dữ liệu TEST để chạy báo cáo kiểm tra.</q>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <h3>KeyGate xem sổ</h3>
+        <p>Việc này có nằm trong danh sách bạn đã cho phép không? Không có trong sổ thì từ chối ngay.</p>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <h3>Bạn gật đầu</h3>
+        <p>Một lần nhìn camera hoặc chạm vân tay trên laptop. Không ngồi ở máy thì bấm <b>Cho phép</b> trên điện thoại.</p>
+      </div>
+      <div class="step">
+        <div class="n">4</div>
+        <h3>KeyGate mở cửa giùm</h3>
+        <p>KeyGate tự chạy việc, trả kết quả cho AI. Mật khẩu lỡ hiện trong kết quả bị bôi đi.</p>
+      </div>
+    </div>
+    <p class="punch reveal">AI nhận kết quả. <span>Chìa khóa không bao giờ rời quầy.</span></p>
+  </div>
+</section>
+
+<section class="day">
+  <div class="wrap">
+    <div class="intro reveal">
+      <p class="eyebrow">Một ngày làm việc</p>
+      <h2>Bạn gần như không phải làm gì thêm.</h2>
+      <p class="sub">Đồng ý một lần, KeyGate nhớ. Chỉ việc mới hoặc lúc bạn vắng mặt mới cần hỏi lại.</p>
+    </div>
+    <ol class="times">
+      <li class="reveal"><time>7:45</time><div><h3>Mở máy, nhìn camera một lần</h3><p>KeyGate mở két và bắt đầu phiên làm việc. Biểu tượng chìa khóa góc màn hình chuyển xanh lá.</p></div></li>
+      <li class="reveal"><time>9:00</time><div><h3>AI chạy việc cả buổi sáng</h3><p>Truy vấn dữ liệu TEST, tạo phiếu Mantis, đồng bộ dữ liệu: những việc bạn đã cho phép chạy ngay, không hỏi lại.</p></div></li>
+      <li class="reveal"><time>14:00</time><div><h3>Bạn kết thúc phiên, đi họp</h3><p>AI cần dùng một mật khẩu lần đầu. Điện thoại rung: bạn đọc yêu cầu, bấm Cho phép hoặc Từ chối ngay trong phòng họp.</p></div></li>
+      <li class="reveal"><time>17:30</time><div><h3>Xem lại sổ nhật ký</h3><p>Hôm nay AI dùng mật khẩu nào, chạy lệnh gì, vào hệ thống nào. Ai sửa hay xóa sổ đều bị phát hiện.</p></div></li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow reveal">Trước và sau</p>
+    <h2 class="reveal">Cùng một công việc, khác ở chỗ ai giữ chìa khóa.</h2>
+    <table class="compare reveal">
+      <thead><tr><th></th><th>Trước</th><th>Với KeyGate</th></tr></thead>
+      <tbody>
+        <tr><th>Mật khẩu nằm ở đâu</th><td>Trong file cấu hình, chữ đọc được</td><td>Trong két mã hóa, chỉ mở bằng khuôn mặt hoặc vân tay của bạn</td></tr>
+        <tr><th>AI có thấy mật khẩu</th><td>Có, đọc file là thấy</td><td>Không bao giờ</td></tr>
+        <tr><th>Ai quyết định cho dùng</th><td>Không ai, cứ đọc được là dùng</td><td>Bạn, bằng một chạm</td></tr>
+        <tr><th>Lỡ in kết quả ra ngoài</th><td>Lộ nguyên mật khẩu</td><td>Chỉ thấy <code>[kg:tên]</code> thay cho mật khẩu</td></tr>
+        <tr><th>Hệ thống thật (PROD)</th><td>Như mọi môi trường khác</td><td>Khóa sẵn, chỉ mở khi bạn ghi rõ từng mật khẩu được phép</td></tr>
+        <tr><th>Biết AI đã làm gì</th><td>Không biết</td><td>Sổ nhật ký ghi từng lần; sửa hay xóa đều bị phát hiện</td></tr>
+        <tr><th>Mất laptop</th><td>Mất luôn mật khẩu, phải đổi hết</td><td>Khôi phục két sang máy mới; laptop cũ bị gỡ quyền</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="eyebrow reveal">Điều bạn có thể yên tâm</p>
+    <h2 class="reveal">Không chỗ nào ngoài laptop của bạn đọc được mật khẩu.</h2>
+    <div class="calm">
+      <div class="reveal"><h3>Điện thoại chỉ là nút đồng ý</h3><p>Điện thoại nhận câu hỏi và gửi câu trả lời đã ký tên. Nó không giữ mật khẩu nào.</p></div>
+      <div class="reveal"><h3>Máy chủ trung gian chỉ chuyển thư niêm phong</h3><p>Dữ liệu đi qua Cloudflare đã mã hóa từ laptop. Cloudflare không đọc được tên lẫn giá trị mật khẩu.</p></div>
+      <div class="reveal"><h3>AI bị chặn ngay từ cửa</h3><p>Mọi lệnh AI định đọc file mật khẩu hay in biến môi trường đều bị chặn kèm lý do bằng tiếng Việt.</p></div>
+      <div class="reveal"><h3>Việc ngoài sổ luôn bị từ chối</h3><p>Lệnh chỉ chạy đúng chương trình, đúng thư mục bạn đã ghi trong sổ, kể cả khi bạn vắng mặt hay quên khóa máy.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="final">
+  <div class="wrap">
+    <img class="reveal" src="../brand/keygate.svg" alt="">
+    <h2 class="reveal">Bắt đầu trong một buổi sáng.</h2>
+    <p class="sub reveal">Cài đặt, chuyển mật khẩu từ file cấu hình vào két, ghép điện thoại. Hướng dẫn đi từng bước, kèm sơ đồ.</p>
+    <div class="cta reveal">
+      <a class="btn btn-primary" href="index.html#cai-dat">Xem hướng dẫn cài đặt</a>
+      <a class="btn btn-ghost" href="index.html#kien-truc">Xem kiến trúc</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer><div class="wrap">KeyGate, mã nguồn mở (MIT). Tài liệu cập nhật 12/11/2026.</div></footer>
+
+<script>
+  const io = new IntersectionObserver((entries) => {
+    for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+  }, { threshold: 0.2 });
+  document.querySelectorAll('.reveal, #steps').forEach((el) => io.observe(el));
+</script>
+</body>
+</html>

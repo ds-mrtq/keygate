@@ -1,0 +1,180 @@
+{
+  "schema_version": 3,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Trạng thái broker và màu icon khay",
+    "locale": "vi",
+    "output": "docs/guide/diagrams/trang-thai-broker.html",
+    "quality_profile": "showcase"
+  },
+  "mainPath": [
+    "stopped",
+    "locked",
+    "opened",
+    "session"
+  ],
+  "states": [
+    {
+      "id": "stopped",
+      "type": "neutral",
+      "label": "Chưa chạy",
+      "sublabel": "broker tắt, lệnh bị từ chối",
+      "tag": "an toàn"
+    },
+    {
+      "id": "locked",
+      "type": "waiting",
+      "label": "Khóa",
+      "sublabel": "vault key không ở RAM",
+      "tag": "icon xám"
+    },
+    {
+      "id": "opened",
+      "type": "active",
+      "label": "Đã mở",
+      "sublabel": "vault key trong RAM",
+      "tag": "icon xanh dương"
+    },
+    {
+      "id": "session",
+      "type": "success",
+      "label": "Phiên làm việc",
+      "sublabel": "grant cấp không hỏi",
+      "tag": "icon xanh lá"
+    },
+    {
+      "id": "pending",
+      "type": "decision",
+      "label": "Chờ duyệt",
+      "sublabel": "chờ Hello/điện thoại",
+      "tag": "icon cam"
+    }
+  ],
+  "transitions": [
+    {
+      "id": "stopped-locked",
+      "from": "stopped",
+      "to": "locked",
+      "label": "đăng nhập"
+    },
+    {
+      "id": "locked-opened",
+      "from": "locked",
+      "to": "opened",
+      "label": "mở khóa"
+    },
+    {
+      "id": "opened-session",
+      "from": "opened",
+      "to": "session",
+      "label": "session start",
+      "variant": "emphasis"
+    },
+    {
+      "id": "session-opened",
+      "from": "session",
+      "to": "opened",
+      "label": "session end"
+    },
+    {
+      "id": "locked-session",
+      "from": "locked",
+      "to": "session",
+      "label": "Hello + phiên",
+      "variant": "emphasis"
+    },
+    {
+      "id": "opened-locked",
+      "from": "opened",
+      "to": "locked",
+      "label": "khóa"
+    },
+    {
+      "id": "opened-pending",
+      "from": "opened",
+      "to": "pending",
+      "label": "cần duyệt",
+      "variant": "security"
+    },
+    {
+      "id": "pending-opened",
+      "from": "pending",
+      "to": "opened",
+      "label": "Cho phép/Từ chối/270s"
+    },
+    {
+      "id": "pending-session",
+      "from": "pending",
+      "to": "session",
+      "label": "Cho phép + phiên",
+      "variant": "emphasis"
+    },
+    {
+      "id": "locked-stopped",
+      "from": "locked",
+      "to": "stopped",
+      "label": "Thoát",
+      "variant": "dashed"
+    },
+    {
+      "id": "session-locked",
+      "from": "session",
+      "to": "locked",
+      "label": "khóa"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Phiên làm việc",
+      "items": [
+        "Grant có policy user-presence/device được cấp không hỏi, kể cả PROD có grant đúng tên",
+        "Audit ghi approval=session"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Vẫn luôn hỏi",
+      "items": [
+        "policy apply, reveal, delete",
+        "ghi đè secret, import/compare",
+        "lệnh chủ"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Chờ duyệt",
+      "items": [
+        "Trạng thái phụ của Đã mở, icon cam",
+        "Chờ tối đa 270 giây rồi trả mã 75"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Chuyển trạng thái",
+      "items": [
+        "Chưa chạy → Khóa: đăng nhập Windows (task \"KeyGate broker\") hoặc `kgw tray`",
+        "Khóa → Phiên: Hello lúc khởi động, menu \"Mở khóa + mở phiên\" hoặc điện thoại \"mở khóa + phiên\"",
+        "Phiên → Đã mở: `kg session end` hoặc menu Kết thúc phiên (xóa grant của phiên)",
+        "Đã mở → Phiên: `kg session start` (một lần Hello)"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Khóa lại",
+      "items": [
+        "`kg lock`, menu Khóa hoặc lệnh khóa từ điện thoại; tùy chọn `--idle`, `--lock-on-screen-lock`",
+        "`--lock-on-screen-lock` mặc định tắt: Win+L không khóa",
+        "Khóa xóa grant tạm, grant bền còn"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Thoát và hết hạn",
+      "items": [
+        "Mọi trạng thái → Chưa chạy: Thoát ở khay hoặc đăng xuất",
+        "Hết 270 giây: lệnh trả mã 75, yêu cầu vẫn mở trên điện thoại"
+      ]
+    }
+  ]
+}

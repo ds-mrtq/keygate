@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Cài đặt và đưa một repo vào KeyGate",
+    "locale": "vi",
+    "quality_profile": "showcase",
+    "output": "docs/guide/diagrams/cai-dat-lan-dau.html"
+  },
+  "lanes": [
+    { "id": "repo", "label": "Repo dự án" },
+    { "id": "kg", "label": "Laptop: lệnh kg" },
+    { "id": "tray", "label": "Laptop: broker khay" },
+    { "id": "cf", "label": "Cloudflare" },
+    { "id": "phone", "label": "Điện thoại" }
+  ],
+  "mainPath": ["build", "init", "autostart", "pairstart", "phoneapp", "pairdone"],
+  "nodes": [
+    { "id": "build", "lane": "kg", "col": 0, "type": "backend", "label": "1. Build", "sublabel": "kg.exe, kgw.exe vào PATH" },
+    { "id": "init", "lane": "kg", "col": 1, "type": "security", "label": "2. kg init", "sublabel": "mật khẩu chủ + khóa giấy" },
+    { "id": "relay", "lane": "cf", "col": 2, "type": "cloud", "label": "3. Deploy relay", "sublabel": "wrangler deploy, ALLOWED_VAULTS" },
+    { "id": "channel", "lane": "kg", "col": 3, "type": "messagebus", "label": "3. kg channel add", "sublabel": "--relay-url" },
+    { "id": "autostart", "lane": "tray", "col": 2, "type": "backend", "label": "4. Tự chạy broker", "sublabel": "install-autostart.ps1" },
+    { "id": "pairstart", "lane": "tray", "col": 3, "type": "frontend", "label": "5. Ghép điện thoại…", "sublabel": "khay, Thiết bị, QR/liên kết" },
+    { "id": "phoneapp", "lane": "phone", "col": 4, "type": "frontend", "label": "5. Mở app PWA", "sublabel": "dán liên kết, hiện Mã ghép + 6 từ" },
+    { "id": "pairdone", "lane": "tray", "col": 5, "type": "security", "label": "5. Nhập mã, so 6 từ", "sublabel": "Đúng, thêm thiết bị" },
+    { "id": "import", "lane": "repo", "col": 0, "type": "database", "label": "6. Nạp secret", "sublabel": "kg import --dotenv .env" },
+    { "id": "policy", "lane": "kg", "col": 2, "type": "security", "label": "7. Viết grant", "sublabel": "policy.yaml, kg policy apply" },
+    { "id": "script", "lane": "repo", "col": 3, "type": "backend", "label": "8. Sửa script", "sublabel": "đọc biến môi trường, --compare" },
+    { "id": "hook", "lane": "repo", "col": 4, "type": "external", "label": "9. Hook + MCP", "sublabel": "integrations/, kg mcp" },
+    { "id": "smoke", "lane": "kg", "col": 5, "type": "backend", "label": "10. Smoke", "sublabel": "kg run, kg audit verify" }
+  ],
+  "edges": [
+    { "from": "build", "to": "init", "variant": "emphasis" },
+    { "from": "init", "to": "relay", "label": "vault ID", "variant": "default" },
+    { "from": "relay", "to": "channel", "label": "URL relay", "variant": "default" },
+    { "from": "init", "to": "autostart", "variant": "dashed", "role": "branch" },
+    { "from": "autostart", "to": "pairstart", "variant": "default" },
+    { "from": "channel", "to": "phoneapp", "label": "kênh duyệt", "variant": "dashed", "role": "branch" },
+    { "from": "pairstart", "to": "phoneapp", "label": "mở bằng Safari", "variant": "emphasis" },
+    { "from": "phoneapp", "to": "pairdone", "label": "Mã ghép", "variant": "security" },
+    { "from": "pairdone", "to": "import", "label": "đã ghép", "variant": "dashed", "role": "return" },
+    { "from": "import", "to": "policy", "variant": "emphasis" },
+    { "from": "policy", "to": "script", "variant": "default" },
+    { "from": "script", "to": "hook", "variant": "default" },
+    { "from": "hook", "to": "smoke", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "rose", "title": "Lưu ý an toàn", "items": ["Mật khẩu chủ từ 12 ký tự, nhập hai lần", "Khóa giấy chỉ in một lần, cất nơi an toàn", "Chỉ gỡ giá trị khỏi .env khi --compare ra toàn same"] }
+  ]
+}

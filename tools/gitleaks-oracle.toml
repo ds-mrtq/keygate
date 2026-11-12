@@ -1,0 +1,34 @@
+# Custom gitleaks rules for Oracle credentials (Phase 0 inventory, PRD 0.4).
+# Default gitleaks rules do not catch Oracle connect strings or IDENTIFIED BY clauses.
+title = "keygate oracle rules"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "oracle-connect-string"
+description = "Oracle user/password@tns in scripts or config"
+regex = '''(?i)(?:^|[\s'"=(:])([a-z][a-z0-9_$#]{1,29})/([^\s/@'"`;]{3,64})@([a-z0-9_.\-:/]{2,128})'''
+secretGroup = 2
+keywords = ["@"]
+[rules.allowlist]
+regexes = ['''(?i)^(?:\*+|x+|pass(?:word)?|pwd|<[^>]+>|\$\{?[a-z_]+\}?|%[a-z_]+%|&[a-z_]+)$''']
+paths = ['''(?i)\.(?:png|jpe?g|gif|svg|ico|pdf|zip|jar|class|exe|dll|so|bin|safetensors|pt|onnx)$''', '''(?i)(?:^|/)(?:node_modules|\.git|\.venv|venv)/''']
+
+[[rules]]
+id = "oracle-identified-by"
+description = "Oracle CREATE/ALTER USER ... IDENTIFIED BY <password>"
+regex = '''(?i)\bidentified\s+by\s+"?([^\s";]{3,64})"?'''
+secretGroup = 1
+keywords = ["identified"]
+[rules.allowlist]
+regexes = ['''(?i)^(?:values|externally|globally|\*+|x+|pass(?:word)?|<[^>]+>|&[a-z_0-9]+|:[a-z_0-9]+|\$\{?[a-z_]+\}?)$''']
+
+[[rules]]
+id = "password-assignment"
+description = "PASSWORD=... style assignment in env/config/scripts"
+regex = '''(?i)\b[a-z0-9_]*(?:password|passwd|pwd)[a-z0-9_]*\s*[:=]\s*['"]?([^\s'"`;,]{4,128})'''
+secretGroup = 1
+keywords = ["password", "passwd", "pwd"]
+[rules.allowlist]
+regexes = ['''(?i)^(?:\*+|x+|null|none|true|false|changeme|password|\$\{?[a-z_.:]+\}?|%[a-z_]+%|<[^>]+>|os\.environ.*|process\.env.*|getenv.*|\$\{secret:[^}]+\})$''']

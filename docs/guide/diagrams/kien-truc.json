@@ -1,0 +1,328 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Kiến trúc KeyGate",
+    "output": "docs/guide/diagrams/kien-truc.html",
+    "quality_profile": "showcase",
+    "locale": "vi"
+  },
+  "components": [
+    {
+      "id": "other",
+      "type": "external",
+      "label": "Máy khác của bạn",
+      "sublabel": "thiết bị đầy đủ",
+      "pos": [
+        30,
+        40
+      ],
+      "size": [
+        170,
+        64
+      ]
+    },
+    {
+      "id": "relay",
+      "type": "cloud",
+      "label": "Relay Worker",
+      "sublabel": "Durable Object VaultDO",
+      "pos": [
+        500,
+        40
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "tag": "không đọc được secret"
+    },
+    {
+      "id": "phone",
+      "type": "frontend",
+      "label": "PWA /app/",
+      "sublabel": "thiết bị duyệt (approver)",
+      "pos": [
+        900,
+        40
+      ],
+      "size": [
+        170,
+        64
+      ],
+      "tag": "không giữ vault key"
+    },
+    {
+      "id": "hook",
+      "type": "security",
+      "label": "Hook kg hook check",
+      "sublabel": "PreToolUse, chặn = exit 2",
+      "pos": [
+        30,
+        260
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "external",
+      "label": "AI agent",
+      "sublabel": "Claude Code / omp",
+      "pos": [
+        30,
+        420
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "backend",
+      "label": "kg CLI / kg mcp",
+      "sublabel": "client mỏng",
+      "pos": [
+        270,
+        420
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "broker",
+      "type": "backend",
+      "label": "Broker kgw tray",
+      "sublabel": "icon khay, giữ vault key trong RAM",
+      "pos": [
+        520,
+        420
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "tag": "policy + pin + allowlist + grant"
+    },
+    {
+      "id": "hello",
+      "type": "security",
+      "label": "Windows Hello",
+      "sublabel": "duyệt người tại máy",
+      "pos": [
+        790,
+        420
+      ],
+      "size": [
+        160,
+        64
+      ]
+    },
+    {
+      "id": "child",
+      "type": "backend",
+      "label": "Tiến trình con",
+      "sublabel": "sql, python, script đã ghim",
+      "pos": [
+        520,
+        580
+      ],
+      "size": [
+        180,
+        64
+      ]
+    },
+    {
+      "id": "kghome",
+      "type": "database",
+      "label": "KG_HOME (~/.keygate)",
+      "sublabel": "log, policy, grants, audit",
+      "pos": [
+        790,
+        580
+      ],
+      "size": [
+        180,
+        64
+      ],
+      "tag": "XChaCha20-Poly1305"
+    },
+    {
+      "id": "target",
+      "type": "external",
+      "label": "Hệ thống đích",
+      "sublabel": "Oracle TEST, API, SSH...",
+      "pos": [
+        520,
+        760
+      ],
+      "size": [
+        190,
+        64
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Laptop (Windows)",
+      "wraps": [
+        "hook",
+        "agent",
+        "cli",
+        "broker",
+        "hello",
+        "child",
+        "kghome"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Cloudflare",
+      "wraps": [
+        "relay"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "Điện thoại",
+      "wraps": [
+        "phone"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "agent-hook",
+      "from": "agent",
+      "to": "hook",
+      "label": "mỗi lần gọi tool",
+      "variant": "security"
+    },
+    {
+      "id": "agent-cli",
+      "from": "agent",
+      "to": "cli",
+      "label": "shell / MCP"
+    },
+    {
+      "id": "cli-broker",
+      "from": "cli",
+      "to": "broker",
+      "label": "socket, chỉ metadata",
+      "variant": "emphasis"
+    },
+    {
+      "id": "broker-hello",
+      "from": "broker",
+      "to": "hello",
+      "label": "xin duyệt",
+      "variant": "security"
+    },
+    {
+      "id": "broker-home",
+      "from": "broker",
+      "to": "kghome",
+      "label": "đọc/ghi",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "broker-child",
+      "from": "broker",
+      "to": "child",
+      "label": "secret",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "child-target",
+      "from": "child",
+      "to": "target",
+      "label": "kết nối"
+    },
+    {
+      "id": "child-agent",
+      "from": "child",
+      "to": "agent",
+      "label": "đầu ra đã che [kg:tên]",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "bottom"
+    },
+    {
+      "id": "broker-relay",
+      "from": "broker",
+      "to": "relay",
+      "label": "kg sync, envelope duyệt ký Ed25519 + AES-GCM",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "relay-phone",
+      "from": "relay",
+      "to": "phone",
+      "label": "Web Push, yêu cầu duyệt",
+      "variant": "dashed"
+    },
+    {
+      "id": "phone-relay",
+      "from": "phone",
+      "to": "relay",
+      "label": "quyết định đã ký",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "bottom"
+    },
+    {
+      "id": "other-relay",
+      "from": "other",
+      "to": "relay",
+      "label": "đồng bộ",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Hook chặn",
+      "items": [
+        ".env, *.p12, cwallet*, thư mục KG_HOME",
+        "dump biến môi trường, kg reveal",
+        "mật khẩu gõ trong lệnh"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "kg mcp",
+      "items": [
+        "list_secrets",
+        "request_grant",
+        "run_with_secret"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Tiến trình con",
+      "items": [
+        "nhận secret qua biến môi trường, file tạm hoặc wallet Oracle tạm",
+        "nằm dưới KG_HOME/run/, xóa sau khi chạy"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Điện thoại",
+      "items": [
+        "Cho phép / Cho phép và mở phiên / Từ chối",
+        "khóa, mở phiên, thu hồi grant, thêm secret"
+      ]
+    }
+  ]
+}

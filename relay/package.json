@@ -1,0 +1,19 @@
+{
+  "name": "keygate-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KeyGate relay: Cloudflare Worker + Durable Object (SQLite). Stores only ciphertext and signed lines.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit",
+    "smoke": "node test/smoke.mjs",
+    "test:proto": "node test/proto.test.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261109.1",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.0.0"
+  }
+}

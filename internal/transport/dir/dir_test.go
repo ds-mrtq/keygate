@@ -1,0 +1,128 @@
+package dir
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"keygate/internal/transport"
+)
+
+func TestRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+	a, _ := New(root, "dev_a")
+	b, _ := New(root, "dev_b")
+
+	if err := a.PushMember(ctx, 0, []byte(`{"n":0}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.PushMember(ctx, 1, []byte(`{"n":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.PushMember(ctx, 1, []byte(`{"n":1}`)); !errors.Is(err, transport.ErrExists) {
+		t.Fatalf("dup member: %v", err)
+	}
+	if err := a.PushMember(ctx, 5, []byte(`x`)); err == nil || errors.Is(err, transport.ErrExists) {
+		t.Fatalf("gap member should fail: %v", err)
+	}
+	for i := uint64(1); i <= 3; i++ {
+		if err := a.PushLog(ctx, "dev_a", i, []byte(`{"seq":`+string(rune('0'+i))+`}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.PushLog(ctx, "dev_a", 2, []byte(`{}`)); !errors.Is(err, transport.ErrExists) {
+		t.Fatalf("dup log: %v", err)
+	}
+	if err := a.PushLog(ctx, "dev_b", 1, []byte(`{}`)); err == nil {
+		t.Fatal("must refuse foreign log")
+	}
+	if err := b.PushCheckpoint(ctx, "dev_a", []byte(`{}`)); err == nil {
+		t.Fatal("must refuse foreign checkpoint")
+	}
+	if err := b.PushLog(ctx, "dev_b", 1, []byte(`{"b":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.PushCheckpoint(ctx, "dev_a", []byte(`{"cp":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.PushCheckpoint(ctx, "dev_a", []byte(`{"cp":2}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := b.Pull(ctx, transport.Since{Members: 1, Logs: map[string]uint64{"dev_a": 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Members) != 1 || string(snap.Members[0]) != `{"n":1}` {
+		t.Fatalf("members: %q", snap.Members)
+	}
+	if len(snap.Logs["dev_a"]) != 2 || string(snap.Logs["dev_a"][0]) != `{"seq":2}` {
+		t.Fatalf("log a: %q", snap.Logs["dev_a"])
+	}
+	if len(snap.Logs["dev_b"]) != 1 {
+		t.Fatalf("log b: %q", snap.Logs["dev_b"])
+	}
+	if string(snap.Checkpoints["dev_a"]) != `{"cp":2}` {
+		t.Fatalf("cp: %q", snap.Checkpoints["dev_a"])
+	}
+	// Nothing new.
+	snap, err = b.Pull(ctx, transport.Since{Members: 2, Logs: map[string]uint64{"dev_a": 3, "dev_b": 1}})
+	if err != nil || len(snap.Members) != 0 || len(snap.Logs) != 0 {
+		t.Fatalf("expected empty: %v %+v", err, snap)
+	}
+	// Empty root works.
+	e, _ := New(t.TempDir(), "dev_x")
+	if _, err := e.Pull(ctx, transport.Since{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "log", "dev_a.kgl")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTornTailAndSymlink(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+	a, _ := New(root, "dev_a")
+	if err := a.PushLog(ctx, "dev_a", 1, []byte(`{"a":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(root, "log", "dev_a.kgl")
+	f, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+	f.WriteString(`{"torn"`) // no trailing newline
+	f.Close()
+	snap, _ := a.Pull(ctx, transport.Since{})
+	if len(snap.Logs["dev_a"]) != 1 || string(snap.Logs["dev_a"][0]) != `{"a":1}` {
+		t.Fatalf("torn tail must be absent: %q", snap.Logs["dev_a"])
+	}
+	if err := a.PushLog(ctx, "dev_a", 1, []byte(`{}`)); !errors.Is(err, transport.ErrExists) {
+		t.Fatalf("seq 1 exists: %v", err)
+	}
+	if err := a.PushLog(ctx, "dev_a", 2, []byte(`{"a":2}`)); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(p)
+	if string(data) != "{\"a\":1}\n{\"a\":2}\n" {
+		t.Fatalf("file after repair: %q", data)
+	}
+
+	// A symlinked log file must not be followed.
+	target := filepath.Join(t.TempDir(), "victim")
+	os.WriteFile(target, []byte("keep"), 0o600)
+	if err := os.Symlink(target, filepath.Join(root, "log", "dev_a2.kgl")); err != nil {
+		t.Skip("symlinks unavailable: ", err)
+	}
+	b, _ := New(root, "dev_a2")
+	if err := b.PushLog(ctx, "dev_a2", 1, []byte(`{}`)); err == nil {
+		t.Fatal("append through symlink must fail")
+	}
+	if got, _ := os.ReadFile(target); string(got) != "keep" {
+		t.Fatal("symlink target modified")
+	}
+	if _, err := a.Pull(ctx, transport.Since{}); err != nil {
+		t.Fatalf("pull must skip symlinks: %v", err)
+	}
+}

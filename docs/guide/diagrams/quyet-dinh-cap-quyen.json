@@ -1,0 +1,362 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Broker quyết định cấp secret cho một lệnh",
+    "quality_profile": "showcase",
+    "output": "docs/guide/diagrams/quyet-dinh-cap-quyen.html",
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "frontend": {
+          "label": "Người duyệt"
+        },
+        "backend": {
+          "label": "Bước cấp quyền"
+        },
+        "security": {
+          "label": "Cổng kiểm tra / từ chối"
+        },
+        "messagebus": {
+          "label": "Trạng thái chờ"
+        },
+        "database": {
+          "label": "Grant bền"
+        },
+        "cloud": {
+          "label": "Thực thi lệnh"
+        },
+        "external": {
+          "label": "Yêu cầu vào"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "deny",
+      "label": "Từ chối",
+      "variant": "exception"
+    },
+    {
+      "id": "gate",
+      "label": "Cổng kiểm tra"
+    },
+    {
+      "id": "approve",
+      "label": "Cấp quyền"
+    },
+    {
+      "id": "run",
+      "label": "Thực thi"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "req",
+      "lane": "gate",
+      "col": 0,
+      "type": "external",
+      "label": "Yêu cầu",
+      "sublabel": "kg run / run_with_secret",
+      "tag": "secret + argv"
+    },
+    {
+      "id": "unlock",
+      "lane": "gate",
+      "col": 1,
+      "type": "security",
+      "label": "1. Đã mở khóa?",
+      "sublabel": "broker đang mở"
+    },
+    {
+      "id": "pin",
+      "lane": "gate",
+      "col": 2,
+      "type": "security",
+      "label": "2. Policy khớp pin?",
+      "sublabel": "policy.yaml = pin"
+    },
+    {
+      "id": "grant",
+      "lane": "gate",
+      "col": 3,
+      "type": "security",
+      "label": "3. Secret có grant?",
+      "sublabel": "PROD: grant đúng tên"
+    },
+    {
+      "id": "cmd",
+      "lane": "gate",
+      "col": 4,
+      "type": "security",
+      "label": "4. Lệnh khớp?",
+      "sublabel": "allow_commands + hash"
+    },
+    {
+      "id": "durable",
+      "lane": "gate",
+      "col": 5,
+      "type": "database",
+      "label": "5. Grant bền còn hạn?",
+      "sublabel": "secret + lệnh + đường dẫn"
+    },
+    {
+      "id": "refuse",
+      "lane": "deny",
+      "col": 2,
+      "type": "security",
+      "label": "Từ chối",
+      "sublabel": "không cấp secret",
+      "tag": "ghi nhật ký"
+    },
+    {
+      "id": "pending",
+      "lane": "run",
+      "col": 3,
+      "type": "messagebus",
+      "label": "Chờ duyệt: mã 75",
+      "sublabel": "quá 270 giây",
+      "tag": "chạy lại sau khi duyệt"
+    },
+    {
+      "id": "session",
+      "lane": "approve",
+      "col": 5,
+      "type": "backend",
+      "label": "6. Trong phiên?",
+      "sublabel": "audit approval=session"
+    },
+    {
+      "id": "none",
+      "lane": "approve",
+      "col": 4,
+      "type": "backend",
+      "label": "7. approval: none?",
+      "sublabel": "mọi lệnh ghim hash"
+    },
+    {
+      "id": "human",
+      "lane": "approve",
+      "col": 3,
+      "type": "frontend",
+      "label": "8. Xin duyệt người",
+      "sublabel": "Hello, 15 giây sau: điện thoại",
+      "tag": "khóa: hỏi điện thoại ngay"
+    },
+    {
+      "id": "outcome",
+      "lane": "approve",
+      "col": 2,
+      "type": "backend",
+      "label": "9. Kết quả duyệt",
+      "sublabel": "Cho phép / Từ chối / quá hạn"
+    },
+    {
+      "id": "save",
+      "lane": "approve",
+      "col": 1,
+      "type": "database",
+      "label": "Lưu grant bền",
+      "sublabel": "dùng lại lần sau"
+    },
+    {
+      "id": "run",
+      "lane": "run",
+      "col": 5,
+      "type": "cloud",
+      "label": "10. Chạy lệnh",
+      "sublabel": "audit, giải mã, tiến trình con",
+      "tag": "che đầu ra, dọn file tạm"
+    },
+    {
+      "id": "refuse2",
+      "lane": "approve",
+      "col": 0,
+      "type": "security",
+      "label": "Từ chối",
+      "sublabel": "người dùng bấm Từ chối"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-req",
+      "from": "req",
+      "to": "unlock",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-unlock",
+      "from": "unlock",
+      "to": "pin",
+      "label": "có",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-pin",
+      "from": "pin",
+      "to": "grant",
+      "label": "khớp",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-grant",
+      "from": "grant",
+      "to": "cmd",
+      "label": "có",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-cmd",
+      "from": "cmd",
+      "to": "durable",
+      "label": "khớp",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-durable-no",
+      "from": "durable",
+      "to": "session",
+      "label": "chưa",
+      "variant": "default"
+    },
+    {
+      "id": "e-session-no",
+      "from": "session",
+      "to": "none",
+      "label": "không",
+      "variant": "default"
+    },
+    {
+      "id": "e-none-no",
+      "from": "none",
+      "to": "human",
+      "label": "không",
+      "variant": "default"
+    },
+    {
+      "id": "e-human",
+      "from": "human",
+      "to": "outcome",
+      "variant": "default"
+    },
+    {
+      "id": "e-allow",
+      "from": "outcome",
+      "to": "save",
+      "label": "Cho phép",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-save",
+      "from": "save",
+      "to": "run",
+      "variant": "emphasis"
+    },
+    {
+      "id": "d-unlock",
+      "from": "unlock",
+      "to": "refuse",
+      "label": "khóa",
+      "variant": "security",
+      "role": "error",
+      "toSide": "left"
+    },
+    {
+      "id": "d-pin",
+      "from": "pin",
+      "to": "refuse",
+      "label": "lệch",
+      "variant": "security",
+      "role": "error",
+      "toSide": "bottom"
+    },
+    {
+      "id": "d-grant",
+      "from": "grant",
+      "to": "refuse",
+      "label": "deny/thiếu",
+      "variant": "security",
+      "role": "error",
+      "toSide": "right"
+    },
+    {
+      "id": "d-cmd",
+      "from": "cmd",
+      "to": "refuse",
+      "label": "lệch",
+      "variant": "security",
+      "role": "error",
+      "toSide": "top"
+    },
+    {
+      "id": "d-outcome",
+      "from": "outcome",
+      "to": "refuse2",
+      "label": "Từ chối",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "id": "d-timeout",
+      "from": "human",
+      "to": "pending",
+      "label": "quá 270 giây",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "r-durable",
+      "from": "durable",
+      "to": "run",
+      "label": "còn hạn",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "r-session",
+      "from": "session",
+      "to": "run",
+      "label": "có: không hỏi",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "r-none",
+      "from": "none",
+      "to": "run",
+      "label": "có",
+      "variant": "dashed",
+      "role": "branch"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "rose",
+      "title": "Cổng 3: secret PROD",
+      "items": [
+        "Secret PROD: env prod hoặc tên có prod/prd",
+        "Chỉ mở khi có grant đúng tên với approval user-presence",
+        "approval: deny luôn bị từ chối"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Cổng 4: khớp lệnh",
+      "items": [
+        "Tên trần phân giải một lần bằng PATH của broker",
+        "Shell chỉ chạy script đã ghim path:",
+        "cmd, wsl, env... luôn chặn; hash sha256: lệch thì từ chối"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Xin duyệt người",
+      "items": [
+        "Màn hình mở: Windows Hello trước, sau 15 giây hỏi thêm điện thoại",
+        "Màn hình khóa: hỏi điện thoại ngay",
+        "Có thể duyệt bằng kg approve trên máy khác (approval device)"
+      ]
+    }
+  ]
+}

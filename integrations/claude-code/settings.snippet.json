@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|mcp__.*",
+        "hooks": [
+          { "type": "command", "command": "kg hook check" }
+        ]
+      }
+    ]
+  }
+}

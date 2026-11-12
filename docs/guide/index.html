@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyGate: hướng dẫn sử dụng</title>
+<link rel="icon" href="../brand/keygate.svg" type="image/svg+xml">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f7f8fa; --fg: #1d2330; --muted: #5b6475; --border: #d9dee7; --surface: #ffffff;
+    --accent: #1f6feb; --ok: #1a7f37; --warn: #b35900; --err: #c62828; --code: #eef1f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1218; --fg: #e4e8ef; --muted: #98a2b3; --border: #2a313d; --surface: #161b23;
+      --accent: #58a6ff; --ok: #3fb950; --warn: #f0883e; --err: #f85149; --code: #1c2230; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+    font: 15px/1.6 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; }
+  .layout { display: grid; grid-template-columns: 260px minmax(0, 1fr); max-width: 1320px; margin: 0 auto; }
+  nav { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 24px 16px; border-right: 1px solid var(--border); }
+  nav .brand { display: flex; gap: 10px; align-items: center; font-weight: 700; font-size: 18px; margin-bottom: 16px; }
+  nav .brand img { width: 32px; height: 32px; }
+  nav ol { list-style: none; padding: 0; margin: 0; counter-reset: s; }
+  nav li { counter-increment: s; }
+  nav a { display: block; padding: 4px 8px; border-radius: 6px; color: var(--muted); text-decoration: none; font-size: 14px; }
+  nav a::before { content: counter(s) ". "; }
+  nav a:hover { background: var(--surface); color: var(--fg); }
+  main { padding: 32px 40px 80px; min-width: 0; }
+  h1 { font-size: 30px; margin: 0 0 8px; }
+  h2 { font-size: 22px; margin: 48px 0 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+  h3 { font-size: 17px; margin: 24px 0 8px; }
+  p, li { max-width: 860px; }
+  a { color: var(--accent); }
+  code { font-family: "Cascadia Code", Consolas, monospace; font-size: 13px; background: var(--code);
+    padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--code); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px;
+    overflow-x: auto; max-width: 980px; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; margin: 12px 0; max-width: 980px; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--surface); }
+  .lead { font-size: 17px; color: var(--muted); max-width: 860px; }
+  .tldr { background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent);
+    border-radius: 8px; padding: 14px 18px; margin: 20px 0; max-width: 980px; }
+  .tldr ul { margin: 6px 0 0; padding-left: 20px; }
+  .note { border-left: 4px solid var(--warn); background: var(--surface); padding: 10px 14px; border-radius: 6px; max-width: 980px; }
+  .danger { border-left-color: var(--err); }
+  figure { margin: 16px 0 8px; max-width: 1100px; }
+  figure iframe { width: 100%; height: 640px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+  figure.tall iframe { height: 820px; }
+  figcaption { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; }
+  .grey { background: #8b949e; } .blue { background: #1f6feb; } .green { background: #1a7f37; } .orange { background: #d97706; }
+  .kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 13px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); } main { padding: 20px; } }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav aria-label="Mục lục">
+  <a class="brand" href="gioi-thieu.html" style="text-decoration:none;color:inherit"><img src="../brand/keygate.svg" alt="">KeyGate</a>
+  <p style="margin:0 0 16px"><a href="gioi-thieu.html" style="color:var(--accent);font-size:14px;text-decoration:none">← Giới thiệu KeyGate</a></p>
+  <ol>
+    <li><a href="#tong-quan">Tổng quan</a></li>
+    <li><a href="#khai-niem">Khái niệm</a></li>
+    <li><a href="#kien-truc">Kiến trúc</a></li>
+    <li><a href="#cai-dat">Cài đặt lần đầu</a></li>
+    <li><a href="#khay">Khay hệ thống và phiên</a></li>
+    <li><a href="#chay-lenh">Chạy lệnh với secret</a></li>
+    <li><a href="#policy">Viết policy</a></li>
+    <li><a href="#dien-thoai">Duyệt bằng điện thoại</a></li>
+    <li><a href="#secret">Quản lý secret</a></li>
+    <li><a href="#grant">Grant</a></li>
+    <li><a href="#thiet-bi">Thiết bị, đồng bộ, khôi phục</a></li>
+    <li><a href="#agent">Tích hợp AI agent</a></li>
+    <li><a href="#audit">Nhật ký audit</a></li>
+    <li><a href="#su-co">Xử lý sự cố</a></li>
+    <li><a href="#tra-lenh">Bảng tra lệnh</a></li>
+  </ol>
+</nav>
+
+<main>
+<h1>KeyGate: hướng dẫn sử dụng</h1>
+<p class="lead">Kho khóa cho AI agent: agent chạy được lệnh cần mật khẩu, token, wallet Oracle mà không bao giờ đọc được giá trị. Tài liệu viết cho bản đang chạy trên laptop (Windows 11, khay <code>kgw tray</code>, relay Cloudflare, iPhone duyệt), cập nhật 12/11/2026. Người mới, chưa quen hệ thống: đọc <a href="gioi-thieu.html">trang giới thiệu</a> trước.</p>
+
+<section id="tong-quan">
+<div class="tldr">
+  <b>Nắm nhanh</b>
+  <ul>
+    <li>Secret nằm trong vault mã hóa ở <code>~/.keygate</code>. Chỉ broker (icon khay KeyGate) giữ khóa giải mã, và chỉ trong RAM.</li>
+    <li>Agent gọi <code>kg run --secret &lt;tên&gt; -- &lt;lệnh&gt;</code>. Broker kiểm policy, xin bạn duyệt khi cần, chạy lệnh với secret và trả đầu ra đã che giá trị thành <code>[kg:&lt;tên&gt;]</code>.</li>
+    <li>Duyệt một lần cho một cặp secret–lệnh thì broker nhớ (grant bền) tới khi bạn thu hồi. Trong <b>phiên làm việc</b> broker cấp luôn không hỏi.</li>
+    <li>Màn hình khóa hoặc bạn không ở máy: yêu cầu duyệt bay sang iPhone. Quá 270 giây lệnh trả mã <b>75</b>; duyệt xong thì chạy lại lệnh.</li>
+    <li>Không có lệnh nào trả giá trị secret về cho agent. Muốn xem giá trị: <code>kg reveal</code>, hiện trong hộp thoại tại máy.</li>
+  </ul>
+</div>
+</section>
+
+<section id="khai-niem">
+<h2>Khái niệm</h2>
+<table>
+  <tr><th>Thuật ngữ</th><th>Nghĩa</th><th>Nằm ở đâu</th></tr>
+  <tr><td>Vault</td><td>Kho secret của bạn, mỗi bản ghi mã hóa XChaCha20-Poly1305 bằng vault key. Có ID dạng <code>vlt_…</code>.</td><td><code>KG_HOME/log/&lt;dev&gt;.kgl</code></td></tr>
+  <tr><td>Secret</td><td>Một giá trị có tên (vd <code>ebs/test/apps</code>, <code>mantis/mantis-api-token</code>) kèm metadata: <code>env</code> (dev/test/prod), <code>kind</code> (<code>env</code>, <code>file</code>, <code>oracle-wallet</code>, <code>template</code>), mô tả, tag.</td><td>trong vault</td></tr>
+  <tr><td>Broker</td><td>Tiến trình duy nhất giải mã được secret. Trên Windows chạy dưới dạng icon khay (<code>kgw tray</code>). Broker tắt thì mọi lệnh cần secret bị từ chối.</td><td>socket <code>KG_HOME/broker.sock</code></td></tr>
+  <tr><td>Policy</td><td>File YAML quy định secret nào được dùng với chương trình/tham số nào, kiểu duyệt nào. Phải <code>kg policy apply</code> sau mỗi lần sửa, nếu không broker từ chối mọi grant.</td><td><code>KG_HOME/policy.yaml</code> + <code>state/policy.pin</code></td></tr>
+  <tr><td>Grant</td><td>Quyền đã cấp cho bộ (secret, mục lệnh trong policy, đường dẫn chương trình). Grant <b>bền</b> sinh ra sau một lần duyệt tường minh (Hello, điện thoại), sống qua khóa/khởi động lại; grant <b>tạm</b> (trong phiên, <code>approval: none</code>) chỉ ở RAM.</td><td><code>state/grants.json</code></td></tr>
+  <tr><td>Phiên làm việc</td><td>Khoảng thời gian bạn đã mở bằng Hello; trong phiên broker cấp mọi grant <code>user-presence</code>/<code>device</code> không hỏi. Không hết hạn, Win+L không đóng phiên.</td><td>RAM broker</td></tr>
+  <tr><td>Thiết bị đầy đủ</td><td>Máy giữ được vault key (laptop, máy khác của bạn). Thêm/thu hồi cần mật khẩu chủ + khóa giấy.</td><td><code>members.kgl</code></td></tr>
+  <tr><td>Thiết bị duyệt</td><td>Điện thoại (PWA), chỉ ký quyết định duyệt, không giữ vault key, không đọc được secret.</td><td><code>members.kgl</code>, role <code>approver</code></td></tr>
+  <tr><td>Mật khẩu chủ + khóa giấy</td><td>Cặp khóa chủ của vault. Khóa giấy in <b>một lần</b> lúc <code>kg init</code>. Mất cả hai thì không khôi phục được vault trên máy mới.</td><td>trong đầu bạn + bản giấy</td></tr>
+  <tr><td>Audit</td><td>Nhật ký mọi lần cấp, chạy, từ chối, có chuỗi hash và MAC; xóa hoặc cắt bớt đều bị phát hiện.</td><td><code>audit/ledger.jsonl</code></td></tr>
+</table>
+</section>
+
+<section id="kien-truc">
+<h2>Kiến trúc</h2>
+<p>Giá trị secret chỉ xuất hiện ở hai nơi: trong RAM broker và trong môi trường của tiến trình con broker chạy. Socket giữa <code>kg</code> và broker chỉ chở tên secret và argv. Relay Cloudflare lưu bản ghi đã mã hóa và chuyển thư duyệt; nó thấy ID vault, ID thiết bị, thời điểm, nhưng không thấy tên hay giá trị secret.</p>
+<figure class="tall">
+  <iframe src="diagrams/kien-truc.html" title="Sơ đồ kiến trúc KeyGate" loading="lazy"></iframe>
+  <figcaption>Sơ đồ kiến trúc. <a href="diagrams/kien-truc.html" target="_blank">Mở riêng</a> để phóng to, xuất ảnh.</figcaption>
+</figure>
+<p class="note">Ranh giới tin cậy đã chấp nhận (11/11/2026): mã PWA do Worker Cloudflare của bạn phục vụ và điện thoại duyệt được mọi loại yêu cầu, kể cả <code>policy apply</code>. Tài khoản Cloudflare vì vậy là một phần gốc tin cậy cho quyền duyệt; vault key và giá trị secret vẫn không nằm trên điện thoại hay Worker.</p>
+</section>
+
+<section id="cai-dat">
+<h2>Cài đặt lần đầu</h2>
+<figure class="tall">
+  <iframe src="diagrams/cai-dat-lan-dau.html" title="Quy trình cài đặt lần đầu" loading="lazy"></iframe>
+  <figcaption>Thứ tự cài đặt và đưa một repo vào KeyGate. <a href="diagrams/cai-dat-lan-dau.html" target="_blank">Mở riêng</a>.</figcaption>
+</figure>
+
+<h3>1. Build</h3>
+<pre><code>cd D:/repos/keygate
+go build -o kg.exe ./cmd/kg
+go build -ldflags "-H=windowsgui" -o "$(go env GOPATH)/bin/kgw.exe" ./cmd/kg</code></pre>
+<p>Đặt <code>kg.exe</code> và <code>kgw.exe</code> vào <code>PATH</code>. Hook của agent cần thấy <code>kg</code> trong <code>PATH</code>.</p>
+
+<h3>2. Tạo vault</h3>
+<pre><code>kg init --label laptop</code></pre>
+<p>Nhập mật khẩu chủ hai lần (ít nhất 12 ký tự). Lệnh in khóa giấy <b>một lần duy nhất</b>: chép tay hoặc in ra, cất cùng chỗ với giấy tờ quan trọng. Không dán vào chat, file, ghi chú điện tử.</p>
+
+<h3>3. Gắn relay</h3>
+<pre><code>cd relay
+npx wrangler login                 # một lần
+# wrangler.toml: ALLOWED_VAULTS = "vlt_xxxxxxxx"  (lấy từ KG_HOME/vault.json)
+npx wrangler deploy
+kg channel add --relay-url https://keygate-relay.&lt;tài-khoản&gt;.workers.dev</code></pre>
+<p><code>kg channel add</code> đòi mật khẩu chủ + khóa giấy, đẩy sự kiện khởi tạo lên relay rồi sync. Chạy khi broker đang tắt.</p>
+
+<h3>4. Cho broker tự chạy khi đăng nhập</h3>
+<pre><code>powershell -File tools/install-autostart.ps1</code></pre>
+<p>Tạo task "KeyGate broker" chạy <code>kgw tray</code>. Đăng nhập Windows xong, Windows Hello hiện lên: xác nhận là vault mở và phiên làm việc bắt đầu. Log ở <code>KG_HOME/broker.log</code>.</p>
+
+<h3>5. Ghép điện thoại</h3>
+<p>Xem mục <a href="#dien-thoai">Duyệt bằng điện thoại</a>.</p>
+
+<h3>6. Nạp secret, viết policy, chuyển script</h3>
+<pre><code>kg import --dotenv D:/repos/abc/.env --prefix abc/ --env dev
+notepad %USERPROFILE%\.keygate\policy.yaml
+kg policy apply
+kg import --dotenv D:/repos/abc/.env --prefix abc/ --compare   # phải ra toàn "same"</code></pre>
+<p>Sửa script của repo để đọc giá trị từ biến môi trường mà <code>kg run</code> cấp (không đọc <code>.env</code>). Khi <code>--compare</code> báo toàn <code>same</code> và smoke qua <code>kg run</code> chạy đúng, mới gỡ giá trị khỏi <code>.env</code>.</p>
+</section>
+
+<section id="khay">
+<h2>Khay hệ thống và phiên làm việc</h2>
+<table>
+  <tr><th>Icon</th><th>Trạng thái</th><th>Agent chạy lệnh thì sao</th></tr>
+  <tr><td><span class="dot grey"></span>Xám</td><td>Khóa: vault key không ở RAM</td><td>Bị từ chối; bạn phải mở khóa (menu khay hoặc điện thoại)</td></tr>
+  <tr><td><span class="dot blue"></span>Xanh dương</td><td>Đã mở, ngoài phiên</td><td>Có grant bền thì chạy ngay; chưa có thì xin duyệt</td></tr>
+  <tr><td><span class="dot green"></span>Xanh lá</td><td>Phiên làm việc</td><td>Chạy ngay, không hỏi (trừ các thao tác luôn hỏi bên dưới)</td></tr>
+  <tr><td><span class="dot orange"></span>Cam</td><td>Có yêu cầu đang chờ duyệt</td><td>Lệnh đang đợi Hello hoặc điện thoại</td></tr>
+</table>
+<figure>
+  <iframe src="diagrams/trang-thai-broker.html" title="Vòng đời trạng thái broker" loading="lazy"></iframe>
+  <figcaption>Chuyển trạng thái broker. <a href="diagrams/trang-thai-broker.html" target="_blank">Mở riêng</a>.</figcaption>
+</figure>
+<h3>Menu khay</h3>
+<ul>
+  <li><b>Mở khóa + mở phiên</b>, <b>Kết thúc phiên</b>, <b>Khóa</b>.</li>
+  <li><b>Thêm secret</b>: hộp thoại nhập tên, metadata và giá trị (ô ẩn). Giá trị không vào log.</li>
+  <li><b>Thiết bị…</b>: danh sách thiết bị (nguồn lúc ghép, hoạt động gần nhất, giờ ghép), <b>Ghép điện thoại…</b>, <b>Thu hồi</b>.</li>
+  <li><b>Nhật ký</b>, <b>Thoát</b>.</li>
+</ul>
+<h3>Phiên làm việc</h3>
+<pre><code>kg session start   # một lần Hello
+kg session end     # không hỏi; xóa grant của phiên, grant bền còn nguyên
+kg lock            # khóa ngay, đồng thời kết thúc phiên
+kg status          # khóa/mở, phiên, epoch, pin policy, grant, số điện thoại duyệt, yêu cầu chờ</code></pre>
+<p>Mặc định broker <b>không</b> tự khóa khi rảnh hay khi <span class="kbd">Win</span>+<span class="kbd">L</span>; job đêm của agent vẫn chạy được. Muốn chặt hơn: chạy broker với <code>--idle 30m</code> và/hoặc <code>--lock-on-screen-lock</code> (chỉ áp ngoài phiên).</p>
+<p class="note">Dù đang trong phiên, các thao tác sau <b>luôn</b> hỏi: <code>policy apply</code>, <code>reveal</code>, <code>delete</code>, ghi đè secret (<code>set</code>/<code>import</code>), <code>import --compare</code>, <code>same</code>, <code>cp</code>, <code>resolve-conflict</code>, thêm/thu hồi thiết bị. Secret PROD không có grant đúng tên vẫn bị từ chối.</p>
+</section>
+
+<section id="chay-lenh">
+<h2>Chạy lệnh với secret</h2>
+<pre><code># Oracle TEST1 qua wallet tạm (kind oracle-wallet)
+kg run --secret ebs/test/apps -- sql /@ebs_test @D:/repos/x/sql/check.sql
+
+# Token vào biến môi trường (kind env)
+kg run --secret mantis/mantis-api-token -- python D:/repos/x/scripts/mantis_api.py me
+
+# Nhiều secret một lần, một lần duyệt cho cả lô
+kg run --secret abc/db-user --secret abc/db-password -- python D:/repos/abc/scripts/etl.py
+
+# Script shell đã ghim trong policy
+kg run --secret dns/api-token -- bash D:/repos/x/scripts/renew-cert.sh</code></pre>
+<figure class="tall">
+  <iframe src="diagrams/kg-run-sequence.html" title="Trình tự một lần kg run" loading="lazy"></iframe>
+  <figcaption>Trình tự một lần <code>kg run</code> phải xin duyệt. <a href="diagrams/kg-run-sequence.html" target="_blank">Mở riêng</a>.</figcaption>
+</figure>
+<h3>Secret đến tay chương trình thế nào</h3>
+<table>
+  <tr><th><code>kind</code></th><th>Chương trình nhận</th></tr>
+  <tr><td><code>env</code></td><td>Biến môi trường tên <code>env_name</code>.</td></tr>
+  <tr><td><code>file</code></td><td>File tạm quyền 600, đường dẫn trong <code>KG_FILE_&lt;TÊN&gt;</code> (hoặc <code>env_name</code>).</td></tr>
+  <tr><td><code>oracle-wallet</code></td><td>Thư mục wallet tạm + <code>tnsnames.ora</code>, <code>sqlnet.ora</code>, <code>ojdbc.properties</code>; biến <code>TNS_ADMIN</code> trỏ vào đó. Kết nối bằng <code>/@&lt;tns_alias&gt;</code>.</td></tr>
+  <tr><td><code>template</code></td><td>Dùng với <code>kg resolve &lt;file&gt; -- lệnh</code>: thay <code>${secret:TÊN}</code> trong file, ghi file tạm, đường dẫn trong <code>KG_RESOLVED</code>.</td></tr>
+</table>
+<p>File tạm và wallet nằm dưới <code>KG_HOME/run/</code>, bị ghi đè rồi xóa sau khi lệnh xong; broker khởi động lại thì dọn phần sót.</p>
+<h3>Đầu ra và mã thoát</h3>
+<ul>
+  <li>stdout và stderr gộp một luồng. Giá trị secret xuất hiện nguyên văn, dạng base64 hay URL-encode đều bị thay bằng <code>[kg:&lt;tên&gt;]</code>. Không che được: hex, chuỗi đảo, UTF-16, nén, giá trị dưới 4 ký tự.</li>
+  <li>Mã thoát = mã thoát của tiến trình con. <code>1</code> = KeyGate từ chối (đọc dòng <code>kg: …</code>). <code>75</code> = đang chờ duyệt.</li>
+  <li>Tiến trình con chạy quá <code>max_runtime</code> (mặc định 30 phút) bị diệt cả cây.</li>
+  <li>SQLcl luôn chạy với <code>-R 4</code>: <code>host</code>, <code>spool</code>, <code>@</code> lồng nhau bị chặn; <code>set heading/pagesize/linesize</code> báo SP2-0738 nhưng script vẫn chạy.</li>
+</ul>
+</section>
+
+<section id="policy">
+<h2>Viết policy</h2>
+<pre><code>oracle:
+  java: C:/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot/bin/java.exe
+  pki_jar: C:/Users/me/AppData/Local/Programs/Oracle/SQLcl/current/lib/oraclepki.jar
+  tns_admin: C:/DevSuiteHome_1/network/admin
+grants:
+  ebs/test/*:
+    kind: oracle-wallet
+    tns_alias: ebs_test
+    allow_commands: ["sql /@ebs_test @path:D:/repos/x/sql/**/*.sql"]
+    approval: user-presence
+    max_runtime: 10m
+  mantis/mantis-api-token:
+    kind: env
+    env_name: MANTIS_API_TOKEN
+    allow_commands: ["python path:D:/repos/x/scripts/mantis_api.py"]
+    approval: user-presence
+    ttl: 8h
+  dns/api-token:
+    kind: env
+    env_name: DNS_API_TOKEN
+    allow_commands: ["C:/Program Files/Git/bin/bash.exe path:D:/repos/x/scripts/renew-cert.sh !exact"]
+    approval: user-presence</code></pre>
+<p>Sửa xong luôn chạy <code>kg policy apply</code>: broker in diff từng grant, gắn cờ <code>approval: none</code>, wildcard, PROD, và chỉ ghi pin sau khi bạn duyệt.</p>
+
+<h3>Quy tắc</h3>
+<table>
+  <tr><th>Trường</th><th>Quy tắc</th></tr>
+  <tr><td>Khóa của grant</td><td>Tên secret chính xác hoặc glob. Khớp chính xác thắng glob.</td></tr>
+  <tr><td><code>approval</code></td><td><code>user-presence</code> (Hello/điện thoại), <code>device</code> (chữ ký từ máy khác qua <code>kg approve</code>), <code>none</code> (chỉ hợp lệ khi mọi lệnh ghim <code>sha256:</code>), <code>deny</code>.</td></tr>
+  <tr><td><code>ttl</code></td><td>Bỏ trống = grant bền không hết hạn; có thì grant hết hạn sau khoảng đó.</td></tr>
+  <tr><td>PROD</td><td>Secret có <code>env</code> là prod/prd/production hoặc tên có đoạn <code>prod</code>/<code>prd</code> mặc định bị từ chối. Chỉ mở bằng grant ghi <b>đúng tên</b> với <code>approval: user-presence</code>.</td></tr>
+  <tr><td>Chương trình</td><td>Tên trần (<code>sql</code>, <code>python</code>) hoặc đường dẫn tuyệt đối. Broker phân giải một lần bằng <code>PATH</code> của chính nó; hộp duyệt hiện đường dẫn thật.</td></tr>
+  <tr><td>Mẫu tham số</td><td>Khớp theo vị trí. <code>*</code> không vượt <code>/</code>, <code>**</code> thì có; tham số chứa <code>..</code> không khớp glob. <code>path:</code>/<code>@path:</code> so đường dẫn tuyệt đối đã chuẩn hóa. <code>!exact</code> cấm tham số thừa.</td></tr>
+  <tr><td>Trình thông dịch</td><td><code>python node perl ruby php deno…</code>: tham số đầu phải là script khớp mẫu, không tùy chọn nào đứng trước.</td></tr>
+  <tr><td>Shell</td><td><code>bash sh zsh dash ksh powershell pwsh</code> chỉ chạy <b>một script đã ghim</b> (<code>path:</code> tới đúng một file, không glob). <code>bash -c</code> bị chặn. <code>cmd fish wsl env xargs start…</code> luôn chặn.</td></tr>
+  <tr><td>Ghim hash</td><td><code>"python path:D:/x/job.py sha256:&lt;hex&gt;"</code>; lấy hash bằng <code>kg hash D:/x/job.py</code>. File đổi thì bị từ chối.</td></tr>
+  <tr><td><code>env_name</code></td><td>Khớp <code>^[A-Za-z_][A-Za-z0-9_]*$</code>, không được là <code>PATH</code>, <code>LD_*</code>, <code>PYTHON*</code>, <code>NODE_OPTIONS</code>, <code>TNS_ADMIN</code>, <code>CLASSPATH</code>…</td></tr>
+</table>
+<figure class="tall">
+  <iframe src="diagrams/quyet-dinh-cap-quyen.html" title="Broker quyết định cấp secret" loading="lazy"></iframe>
+  <figcaption>Các cổng broker kiểm trước khi chạy lệnh. <a href="diagrams/quyet-dinh-cap-quyen.html" target="_blank">Mở riêng</a>.</figcaption>
+</figure>
+</section>
+
+<section id="dien-thoai">
+<h2>Duyệt bằng điện thoại</h2>
+<h3>Ghép iPhone</h3>
+<ol>
+  <li>Khay KeyGate → <b>Thiết bị…</b> → <b>Ghép điện thoại…</b>: hiện QR và liên kết ghép nối.</li>
+  <li>Trên iPhone, mở liên kết bằng Safari → <b>Chia sẻ</b> → <b>Thêm vào Màn hình chính</b>. Mở KeyGate từ màn hình chính (không dùng tab Safari).</li>
+  <li>Dán liên kết ghép nối vào app. App hiện <b>Mã ghép</b> 8 ký tự và <b>6 từ xác nhận</b>.</li>
+  <li>Trên laptop nhập mã ghép → <b>Tiếp</b> → so 6 từ trên hai màn hình. Khác một từ thì dừng. Giống hết thì <b>Đúng, thêm thiết bị</b>.</li>
+  <li>Nhập mật khẩu chủ + khóa giấy. Xong, <code>kg status</code> báo <code>Điện thoại duyệt: 1 thiết bị</code>.</li>
+</ol>
+<p>Kiểm tra thông báo đẩy và khóa của app: mở <code>&lt;relay&gt;/app/diag.html</code> trên điện thoại.</p>
+
+<h3>Khi nào điện thoại được hỏi</h3>
+<ul>
+  <li>Màn hình laptop đang mở: Windows Hello hiện trước; sau 15 giây chưa trả lời thì điện thoại cũng được hỏi, bên nào trả lời trước thắng.</li>
+  <li>Màn hình đang khóa: hỏi điện thoại ngay.</li>
+  <li>Có grant bền hoặc đang trong phiên: không hỏi ai, không có thông báo.</li>
+  <li>Chỉ làm tại máy, không bao giờ qua điện thoại: <code>reveal</code>, ghi đè secret, <code>same</code>, <code>cp</code>, nhập giá trị bằng hộp thoại, thu hồi thiết bị.</li>
+</ul>
+
+<h3>Ba nút trên điện thoại</h3>
+<table>
+  <tr><th>Nút</th><th>Kết quả</th></tr>
+  <tr><td><b>Cho phép</b></td><td>Cấp grant bền cho đúng cặp secret–lệnh đó; lần sau không hỏi tới khi thu hồi.</td></tr>
+  <tr><td><b>Cho phép và mở phiên</b></td><td>Như trên, và mở phiên làm việc: các lệnh tiếp theo không hỏi nữa.</td></tr>
+  <tr><td><b>Từ chối</b></td><td>Lệnh bị từ chối, ghi audit <code>deny</code>.</td></tr>
+</table>
+<p>Quyết định gắn với bản băm của yêu cầu (thao tác, secret, lệnh, nội dung sẽ áp dụng) và chỉ dùng một lần. Nếu <code>.env</code> hay <code>policy.yaml</code> đổi sau khi duyệt, lần chạy lại tạo yêu cầu mới.</p>
+
+<h3>Mã thoát 75</h3>
+<p>Lệnh chờ quá 270 giây (giới hạn tool của agent là 300 giây) thì in <code>kg: đang chờ duyệt trên điện thoại (KeyGate, yêu cầu abc123)</code> và thoát mã 75. Yêu cầu vẫn mở trên điện thoại; duyệt trong vòng 10 phút rồi chạy lại <b>đúng lệnh cũ</b> là chạy được, không hỏi lại.</p>
+<p>Điện thoại còn làm được: khóa, mở khóa + phiên, kết thúc phiên, thu hồi grant, thêm secret (giá trị niêm phong riêng cho laptop).</p>
+</section>
+
+<section id="secret">
+<h2>Quản lý secret</h2>
+<table>
+  <tr><th>Việc</th><th>Lệnh</th><th>Ghi chú</th></tr>
+  <tr><td>Xem danh sách</td><td><code>kg list</code></td><td>Tên, env, kind, lần chạy gần nhất, cờ xung đột. Không có giá trị.</td></tr>
+  <tr><td>Thêm một secret</td><td><code>kg set abc/api-token --kind env --env dev --env-name API_TOKEN</code></td><td>Broker hỏi giá trị trong hộp thoại ẩn. Hoặc khay → Thêm secret.</td></tr>
+  <tr><td>Secret wallet Oracle</td><td><code>kg set ebs/test/apps --kind oracle-wallet --env test --tns-alias ebs_test --user APPS</code></td><td>Giá trị là mật khẩu DB.</td></tr>
+  <tr><td>Nhập từ <code>.env</code></td><td><code>kg import --dotenv f.env --prefix abc/ --env dev</code></td><td>Broker tự đọc file sau khi duyệt. <code>--rewrite</code> để broker ghi lại file.</td></tr>
+  <tr><td>So <code>.env</code> với vault</td><td><code>kg import --dotenv f.env --prefix abc/ --compare</code></td><td>In <code>same</code>/<code>diff</code>/<code>missing</code>/<code>extra</code>, không ghi gì.</td></tr>
+  <tr><td>So hai secret</td><td><code>kg same a b [c…]</code></td><td>Tìm key trùng giá trị giữa các repo.</td></tr>
+  <tr><td>Sao chép sang tên mới</td><td><code>kg cp nguon dich [--env-name X]</code></td><td>Không ghi đè đích đã có.</td></tr>
+  <tr><td>Xóa</td><td><code>kg delete ten1 ten2</code></td><td>Một lần duyệt cho cả lô; tên sai thì không xóa gì.</td></tr>
+  <tr><td>Xem giá trị</td><td><code>kg reveal ten</code></td><td>Hiện trong hộp thoại tại máy, tự đóng sau 60 giây. Hook chặn agent gọi lệnh này.</td></tr>
+  <tr><td>Xung đột giữa hai máy</td><td><code>kg conflicts</code>, <code>kg resolve-conflict ten --keep &lt;dev|hash&gt;</code></td><td>Secret đang xung đột không được cấp.</td></tr>
+</table>
+<p class="note">Đặt tên theo <code>&lt;repo hoặc hệ thống&gt;/&lt;môi trường&gt;/&lt;tên&gt;</code>. Tên có đoạn <code>prod</code> luôn bị coi là PROD dù <code>--env</code> khai gì.</p>
+</section>
+
+<section id="grant">
+<h2>Grant</h2>
+<pre><code>kg grants                          # secret, mẫu lệnh, by=hello|remote:&lt;dev&gt;|session|none, lúc cấp, hạn, bền/tạm
+kg grants revoke mantis/mantis-api-token
+kg grants revoke --all
+kg grant ebs/test/apps -- sql /@ebs_test @D:/repos/x/sql/a.sql   # xin trước, trước khi giao việc cho agent</code></pre>
+<p>Thu hồi không cần mở khóa và không hỏi (chỉ giảm quyền). Sửa policy bỏ một mục <code>allow_commands</code> thì grant bền của mục đó bị xóa khi <code>policy apply</code>.</p>
+</section>
+
+<section id="thiet-bi">
+<h2>Thiết bị, đồng bộ, khôi phục</h2>
+<h3>Thêm máy tính thứ hai</h3>
+<pre><code># máy mới
+kg device request --label mac-nha        # in mã đăng ký + 6 từ
+# laptop (broker tắt, hoặc dùng khay Thiết bị…)
+kg device add &lt;mã&gt;                       # so 6 từ, gõ yes, mật khẩu chủ + khóa giấy; in vault ID + ghim genesis
+# máy mới
+kg sync --via relay --relay-url &lt;URL&gt; --vault vlt_… --pin &lt;ghim&gt;</code></pre>
+<h3>Đồng bộ</h3>
+<pre><code>kg sync                    # dùng kênh trong vault.json
+kg sync --via git --git-dir D:/sync/kg
+kg sync --verify-via git   # so trạng thái qua git với qua relay, khác thì báo ErrFork
+kg fingerprint             # 6 từ đại diện trạng thái; hai máy phải ra giống nhau</code></pre>
+<h3>Thu hồi thiết bị</h3>
+<ul>
+  <li>Điện thoại duyệt: khay → Thiết bị… → Thu hồi, chỉ cần Windows Hello. Không đổi epoch.</li>
+  <li>Máy tính (thiết bị đầy đủ): cần thêm mật khẩu chủ + khóa giấy. Broker tạo epoch mới, mã hóa lại mọi secret và ghi vào <code>broker.log</code> danh sách secret máy đó từng giải mã: <b>đổi các secret này ở hệ thống đích</b>.</li>
+</ul>
+<h3>Mất laptop</h3>
+<pre><code>kg recover --from https://keygate-relay.&lt;tài-khoản&gt;.workers.dev --label laptop-moi --vault vlt_… --members-file members.kgl</code></pre>
+<p>Cần mật khẩu chủ + khóa giấy. Sau đó từ máy mới thu hồi laptop cũ.</p>
+</section>
+
+<section id="agent">
+<h2>Tích hợp AI agent</h2>
+<h3>Claude Code</h3>
+<ol>
+  <li>Gộp <code>integrations/claude-code/settings.snippet.json</code> vào <code>~/.claude/settings.json</code> (thêm vào mảng <code>hooks.PreToolUse</code> nếu đã có, không ghi đè).</li>
+  <li><code>claude mcp add keygate -- kg mcp</code> hoặc gộp <code>mcp.snippet.json</code> vào <code>.mcp.json</code>.</li>
+  <li>Khởi động lại; thử bảo agent <code>cat .env</code>: phải bị chặn với lý do tiếng Việt.</li>
+</ol>
+<h3>omp</h3>
+<ol>
+  <li>Chép <code>integrations/omp/keygate-hook.ts</code> vào <code>%USERPROFILE%\.omp\agent\hooks\pre\</code>. Thiếu <code>kg</code> trong PATH thì hook cảnh báo và cho qua; lỗi khác thì chặn.</li>
+  <li>Thêm MCP server <code>keygate</code> chạy <code>kg mcp</code> (stdio).</li>
+</ol>
+<h3>Hook chặn gì</h3>
+<p>Đọc/grep <code>.env</code>, <code>.env.*</code>, <code>*.sso</code>, <code>*.p12</code>, <code>cwallet*</code>, thư mục <code>KG_HOME</code>; <code>env</code>, <code>printenv</code>, <code>set</code>, <code>Get-ChildItem Env:</code>; <code>kg reveal</code>; mật khẩu gõ thẳng trong lệnh (<code>user/pass@</code>, <code>--password=</code>, <code>Authorization: Bearer …</code>, <code>PASSWORD=…</code>).</p>
+<pre><code>echo '{"tool_name":"Bash","tool_input":{"command":"cat .env"}}' | kg hook check ; echo $?   # 2 = chặn
+echo '{"tool_name":"Bash","tool_input":{"command":"cat README.md"}}' | kg hook check ; echo $?   # 0</code></pre>
+<h3>Công cụ MCP</h3>
+<table>
+  <tr><th>Tool</th><th>Tham số</th><th>Trả về</th></tr>
+  <tr><td><code>list_secrets</code></td><td>không</td><td>tên, env, kind, lần dùng cuối, xung đột</td></tr>
+  <tr><td><code>request_grant</code></td><td><code>secret</code>, <code>command[]</code></td><td>thông tin grant</td></tr>
+  <tr><td><code>run_with_secret</code></td><td><code>secrets[]</code>, <code>argv[]</code>, <code>dir?</code></td><td>đầu ra đã che + mã thoát</td></tr>
+</table>
+<p>Đặt <code>KG_AGENT=claude-code</code> (hoặc <code>omp</code>) trong môi trường của agent để audit ghi nhãn người gọi.</p>
+</section>
+
+<section id="audit">
+<h2>Nhật ký audit</h2>
+<pre><code>kg audit verify            # kiểm chuỗi hash, MAC từng dòng, neo đầu chuỗi
+kg audit show --since 7d   # tuần qua agent dùng secret nào, chạy lệnh gì, mã thoát bao nhiêu</code></pre>
+<p>Mỗi dòng ghi: sự kiện (<code>grant</code>, <code>run-start</code>, <code>run</code>, <code>deny</code>, <code>reveal</code>, <code>set</code>, <code>import</code>, <code>policy</code>, <code>device-add</code>…), secret, env, argv, nhãn agent tự khai, <code>peer</code> (PID/đường dẫn tiến trình gọi), kiểu duyệt (<code>session</code>, <code>user-presence</code>, <code>remote:&lt;dev&gt;</code>), mã thoát. Ghi audit lỗi thì lệnh không chạy.</p>
+</section>
+
+<section id="su-co">
+<h2>Xử lý sự cố</h2>
+<table>
+  <tr><th>Hiện tượng</th><th>Nguyên nhân</th><th>Cách xử lý</th></tr>
+  <tr><td>Mọi lệnh <code>kg run</code> báo broker không chạy</td><td>Khay đã thoát hoặc task autostart chưa chạy</td><td>Chạy <code>kgw tray</code>; kiểm task "KeyGate broker"</td></tr>
+  <tr><td>Bị từ chối dù đã viết grant</td><td>Sửa <code>policy.yaml</code> mà chưa apply (lệch pin)</td><td><code>kg policy apply</code>; <code>kg status</code> xem dòng pin</td></tr>
+  <tr><td>Từ chối "không khớp allowlist"</td><td>Đường dẫn script ngoài mẫu, có <code>..</code>, tùy chọn đứng trước script, hoặc gọi bằng đường dẫn chương trình khác bản broker phân giải</td><td>Gọi bằng tên trần (<code>python</code>, <code>sql</code>) và đường dẫn script tuyệt đối khớp <code>path:</code></td></tr>
+  <tr><td>Từ chối secret PROD</td><td>Không có grant đúng tên với <code>user-presence</code></td><td>Thêm grant đúng tên, apply</td></tr>
+  <tr><td>Từ chối do hash lệch</td><td>Script đã ghim <code>sha256:</code> bị sửa</td><td><code>kg hash &lt;file&gt;</code>, cập nhật policy, apply</td></tr>
+  <tr><td>Mã thoát 75</td><td>Chưa ai duyệt trong 270 giây</td><td>Duyệt trên điện thoại, chạy lại đúng lệnh trong 10 phút</td></tr>
+  <tr><td><code>bash</code> chạy vào WSL</td><td><code>bash</code> trần trên PATH của broker là <code>C:\Windows\System32\bash.exe</code></td><td>Ghi đường dẫn Git Bash tuyệt đối trong <code>allow_commands</code></td></tr>
+  <tr><td>Script Python lỗi <code>cp1252</code> khi chạy qua khay</td><td>Tiến trình con kế thừa môi trường của broker</td><td>Đặt <code>PYTHONUTF8=1</code> ở mức User, khởi động lại khay</td></tr>
+  <tr><td>SQLcl báo SP2-0738 với <code>set heading</code>…</td><td>Broker luôn chèn <code>-R 4</code></td><td>Bỏ qua (script vẫn chạy) hoặc bỏ các lệnh <code>set</code> đó</td></tr>
+  <tr><td>SQLcl không đăng nhập được bằng wallet</td><td>Thiếu khối <code>oracle:</code> hoặc java/jar/tns dò sai</td><td>Ghi <code>java</code>, <code>pki_jar</code>, <code>tns_admin</code> trong policy; JDK ≥ 11</td></tr>
+  <tr><td>iPhone báo "Cần ghép lại"</td><td>Khóa riêng của app không đọc lại được hoặc thiết bị đã bị thu hồi</td><td>Bấm Ghép lại trên app, làm lại bước ghép ở khay</td></tr>
+  <tr><td>Không nhận thông báo trên iPhone</td><td>App mở bằng tab Safari, chưa cho phép thông báo</td><td>Mở từ màn hình chính; kiểm <code>/app/diag.html</code></td></tr>
+  <tr><td><code>kg device add</code> báo phải dừng broker</td><td>Broker đang giữ <code>KG_HOME/lock</code></td><td>Dùng khay Thiết bị…, hoặc Thoát khay rồi chạy lệnh</td></tr>
+</table>
+<p class="note danger">Không dán giá trị secret, mật khẩu chủ hay khóa giấy vào chat với agent, Teams, Zalo. Khi nghi lộ: <code>kg grants revoke --all</code>, đổi mật khẩu ở hệ thống đích, cập nhật bằng <code>kg set</code>.</p>
+</section>
+
+<section id="tra-lenh">
+<h2>Bảng tra lệnh</h2>
+<h3>Cần broker đang chạy</h3>
+<table>
+  <tr><th>Lệnh</th><th>Việc</th></tr>
+  <tr><td><code>kgw tray</code></td><td>Broker dạng icon khay (Windows)</td></tr>
+  <tr><td><code>kg status</code></td><td>Trạng thái khóa, phiên, vault, epoch, pin, grant, điện thoại duyệt</td></tr>
+  <tr><td><code>kg session start|end</code>, <code>kg lock</code></td><td>Mở/đóng phiên, khóa</td></tr>
+  <tr><td><code>kg run --secret A [--secret B] [--as env|file|wallet] [--dir D] -- lệnh…</code></td><td>Chạy lệnh với secret</td></tr>
+  <tr><td><code>kg resolve &lt;file&gt; [--into ENV] -- lệnh…</code></td><td>Thay <code>${secret:X}</code> trong file mẫu rồi chạy</td></tr>
+  <tr><td><code>kg grant &lt;secret&gt; -- lệnh…</code></td><td>Xin grant trước</td></tr>
+  <tr><td><code>kg grants [revoke &lt;secret&gt;|--all]</code></td><td>Xem/thu hồi grant</td></tr>
+  <tr><td><code>kg list</code>, <code>kg set</code>, <code>kg import</code>, <code>kg same</code>, <code>kg cp</code>, <code>kg delete</code>, <code>kg reveal</code></td><td>Quản lý secret</td></tr>
+  <tr><td><code>kg policy apply</code></td><td>Áp policy mới (xem diff, duyệt)</td></tr>
+  <tr><td><code>kg hash &lt;file&gt;</code></td><td>In <code>sha256:</code> để ghim</td></tr>
+  <tr><td><code>kg conflicts</code>, <code>kg resolve-conflict</code></td><td>Xử lý xung đột giữa máy</td></tr>
+  <tr><td><code>kg mcp</code></td><td>MCP server cho agent</td></tr>
+</table>
+<h3>Chạy độc lập</h3>
+<table>
+  <tr><th>Lệnh</th><th>Việc</th></tr>
+  <tr><td><code>kg init --label &lt;nhãn&gt; [--relay-url U]</code></td><td>Tạo vault</td></tr>
+  <tr><td><code>kg channel add --relay-url U|--git-dir G|--dir D</code></td><td>Gắn kênh đồng bộ</td></tr>
+  <tr><td><code>kg sync [--via dir|git|relay] [--verify-via git]</code></td><td>Đồng bộ</td></tr>
+  <tr><td><code>kg fingerprint</code></td><td>6 từ trạng thái vault</td></tr>
+  <tr><td><code>kg device request|add|revoke</code></td><td>Thêm/thu hồi thiết bị</td></tr>
+  <tr><td><code>kg recover --from …</code></td><td>Khôi phục vault vào máy mới</td></tr>
+  <tr><td><code>kg approve &lt;challenge&gt;</code></td><td>Máy khác duyệt giúp (approval <code>device</code>)</td></tr>
+  <tr><td><code>kg audit verify|show [--since 7d]</code></td><td>Kiểm và xem audit</td></tr>
+  <tr><td><code>kg hook check</code></td><td>Hook PreToolUse cho agent</td></tr>
+</table>
+<p>Tham chiếu đầy đủ: <code>docs/CLI.md</code>; thiết kế mật mã, định dạng file, relay: <code>docs/DESIGN.md</code>.</p>
+</section>
+</main>
+</div>
+</body>
+</html>

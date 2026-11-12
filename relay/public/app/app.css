@@ -1,0 +1,109 @@
+/* KeyGate web app. Token và lớp .kg-* chuyển nguyên từ prototype giao diện (không kèm repo) (phần "Web app (PWA)"). */
+:root{
+  --bg:#F6F6F3; --surface:#FFFFFF; --fg:#15171C; --muted:#6A7079; --line:#E3E3DE; --field:#F0F0EC;
+  --locked:#6B7280; --unlocked:#2563EB; --session:#16A34A; --pending:#D97706; --danger:#C62828;
+  --mono: ui-monospace, "SF Mono", Consolas, "Cascadia Mono", monospace;
+  --sans: -apple-system, "Segoe UI", system-ui, Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#0E1013; --surface:#16191E; --fg:#ECEDEE; --muted:#979DA6; --line:#282C33; --field:#1D2127;
+    --locked:#8B929C; --unlocked:#5B8DEF; --session:#35C46A; --pending:#F0A93B; --danger:#F26D6D; }
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+
+/* ===== Web app (PWA) ===== */
+.kg-app{height:100%;display:flex;flex-direction:column;background:var(--bg);color:var(--fg);font:15px/1.4 var(--sans);color-scheme:light dark}
+.kg-head{padding:54px 20px 14px;background:var(--surface);border-bottom:1px solid var(--line)}
+.kg-machine{font-size:12px;color:var(--muted);display:flex;justify-content:space-between}
+.kg-state{display:flex;align-items:center;gap:10px;margin:6px 0 12px;font-size:22px;font-weight:650;letter-spacing:-.01em}
+.kg-dot{width:12px;height:12px;border-radius:4px;background:var(--locked);flex:none;transition:background .25s}
+.kg-app[data-state=session] .kg-dot{background:var(--session)}
+.kg-app[data-state=unlocked] .kg-dot{background:var(--unlocked)}
+.kg-app[data-pending="1"] .kg-dot{background:var(--pending)}
+.kg-actions{display:flex;gap:8px}
+.kg-btn{font:inherit;font-weight:600;font-size:15px;min-height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer}
+.kg-btn.primary{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.kg-btn.danger{color:var(--danger)}
+.kg-btn.wide{flex:1}
+.kg-btn:active{transform:scale(.98)}
+.kg-main{flex:1;overflow:auto;padding:14px 20px 20px}
+.kg-h{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:6px 0 10px}
+.kg-empty{color:var(--muted);padding:28px 0;text-align:center;font-size:14px}
+.kg-empty b{display:block;color:var(--fg);font-size:16px;margin-bottom:4px}
+
+/* Thẻ yêu cầu: thẻ chính là tương tác, nên có khung */
+.kg-req{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--pending);border-radius:12px;padding:14px 14px 12px;margin-bottom:12px;animation:kg-in .28s ease-out}
+@keyframes kg-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.kg-req.done{border-left-color:var(--line);opacity:.65;transition:opacity .3s}
+.kg-req-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.kg-req-op{font-weight:650;font-size:16px}
+.kg-prod{font-size:11px;font-weight:700;letter-spacing:.05em;color:var(--danger);border:1px solid var(--danger);border-radius:4px;padding:1px 5px}
+.kg-req-sec{font-family:var(--mono);font-size:13px;margin:8px 0 0;word-break:break-all}
+.kg-code{font-family:var(--mono);font-size:12.5px;background:var(--field);border-radius:8px;padding:9px 10px;margin:8px 0;word-break:break-all;white-space:pre-wrap}
+.kg-meta{font-size:12px;color:var(--muted)}
+.kg-more{font:inherit;font-size:13px;color:var(--fg);background:none;border:0;padding:8px 0;text-decoration:underline;cursor:pointer}
+.kg-diff{font-family:var(--mono);font-size:12px;background:var(--field);border-radius:8px;padding:10px;white-space:pre-wrap;word-break:break-all;margin-bottom:8px}
+.kg-diff .add{color:var(--session)} .kg-diff .del{color:var(--danger)} .kg-diff .warn{color:var(--pending);font-weight:600}
+.kg-req-btns{display:flex;gap:8px;margin-top:6px}
+.kg-req-alt{display:block;width:100%;text-align:center;margin-top:4px}
+.kg-result{font-size:13px;color:var(--muted);margin-top:6px}
+
+/* Danh sách phẳng, không thẻ */
+.kg-search{width:100%;font:inherit;min-height:44px;padding:0 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg);margin-bottom:6px}
+.kg-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--line)}
+.kg-row-name{font-family:var(--mono);font-size:13.5px;word-break:break-all}
+.kg-row-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.kg-link{font:inherit;font-size:14px;font-weight:600;background:none;border:0;color:var(--danger);min-height:44px;padding:0 4px;cursor:pointer;flex:none}
+.kg-log{font-size:12.5px;padding:9px 0;border-bottom:1px solid var(--line);display:grid;grid-template-columns:52px 1fr;gap:8px}
+.kg-log time{color:var(--muted);font-family:var(--mono)}
+.kg-log b{font-weight:600}
+.kg-form label{display:block;font-size:13px;color:var(--muted);margin:12px 0 4px}
+.kg-form input,.kg-form select{width:100%;font:inherit;min-height:44px;padding:0 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
+.kg-form .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.kg-check{display:flex;align-items:center;gap:8px;margin:14px 0;font-size:14px}
+.kg-check input{width:20px;height:20px;min-height:0}
+.kg-note{font-size:12.5px;color:var(--muted);margin:10px 0}
+.kg-warn{font-size:13px;color:var(--pending);background:var(--field);border-radius:8px;padding:9px 10px;margin:0 0 10px}
+
+.kg-tabs{display:grid;grid-template-columns:repeat(5,1fr);background:var(--surface);border-top:1px solid var(--line);padding:6px 6px 22px}
+.kg-tab{font:inherit;font-size:11.5px;color:var(--muted);background:none;border:0;min-height:48px;cursor:pointer;position:relative}
+.kg-tab[aria-selected=true]{color:var(--fg);font-weight:650}
+.kg-tab[aria-selected=true]::before{content:"";position:absolute;top:-7px;left:25%;right:25%;height:2px;background:var(--fg)}
+.kg-badge{display:inline-block;min-width:18px;padding:0 5px;border-radius:9px;background:var(--pending);color:#fff;font-size:11px;font-weight:700;margin-left:3px}
+
+/* Thiết lập lần đầu */
+.kg-setup{padding:70px 24px 24px;height:100%;overflow:auto;background:var(--bg);color:var(--fg);font:15px/1.45 var(--sans)}
+.kg-setup h2{font-size:26px;letter-spacing:-.02em;margin:0 0 6px}
+.kg-setup p{color:var(--muted);margin:0 0 16px}
+.kg-steps{counter-reset:s;list-style:none;padding:0;margin:0 0 18px}
+.kg-steps li{counter-increment:s;padding:10px 0 10px 34px;position:relative;border-bottom:1px solid var(--line)}
+.kg-steps li::before{content:counter(s);position:absolute;left:0;top:10px;width:22px;height:22px;border-radius:6px;background:var(--fg);color:var(--bg);font-size:12px;font-weight:700;display:grid;place-items:center}
+.kg-pair{font-family:var(--mono);font-size:34px;letter-spacing:.14em;font-weight:700;margin:6px 0 14px}
+.kg-words{font-family:var(--mono);font-size:17px;line-height:1.7;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px}
+.kg-spin{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--pending);animation:kg-pulse 1s infinite alternate;margin-right:6px}
+@keyframes kg-pulse{from{opacity:.25}to{opacity:1}}
+
+/* ===== Chỗ gắn vào trang thật (không có trong prototype): thay các style inline của prototype bằng lớp ===== */
+body{background:var(--bg);color:var(--fg);font:15px/1.4 var(--sans)}
+#root,.kg-app,.kg-setup{height:100vh;height:100dvh}
+.kg-head{padding-top:max(54px,calc(env(safe-area-inset-top) + 14px))}
+.kg-setup{padding-top:max(70px,calc(env(safe-area-inset-top) + 24px))}
+.kg-tabs{padding-bottom:max(22px,env(safe-area-inset-bottom))}
+.kg-machine .stale{color:var(--pending);font-weight:600}
+.kg-machine select{font:inherit;color:var(--fg);background:none;border:0;padding:0}
+.kg-mono{font-family:var(--mono)}
+.kg-full{width:100%}
+.kg-mt{margin-top:14px}
+.kg-mt6{margin-top:6px}
+.kg-gap{height:16px}
+.kg-pair-cmd{font-size:14px}
+.kg-h2{margin-top:16px}
+.kg-warn-top{margin:0 0 10px}
+[hidden]{display:none !important}
+
+/* Device self-check page (diag.html) */
+.kg-diag { font-family: ui-monospace, Consolas, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+.kg-diag .ok { color: #16A34A; }
+.kg-diag .bad { color: #C62828; font-weight: 600; }
+.kg-diag .info { color: inherit; opacity: .75; }
