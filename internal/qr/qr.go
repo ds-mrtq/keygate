@@ -9,6 +9,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 )
 
 // ErrTooLong means the data does not fit a version-10-M symbol.
@@ -22,6 +23,33 @@ type Code struct {
 
 // Dark reports whether module (x, y) is dark.
 func (c *Code) Dark(x, y int) bool { return c.modules[y][x] }
+
+// Text renders the symbol for a terminal with a 2-module quiet zone, two rows per line (half
+// blocks). LIGHT modules are the filled blocks, so it reads correctly on a dark terminal.
+func (c *Code) Text() string {
+	const q = 2
+	dark := func(x, y int) bool {
+		return x >= 0 && y >= 0 && x < c.Size && y < c.Size && c.modules[y][x]
+	}
+	var b strings.Builder
+	for y := -q; y < c.Size+q; y += 2 {
+		for x := -q; x < c.Size+q; x++ {
+			top, bot := !dark(x, y), !dark(x, y+1)
+			switch {
+			case top && bot:
+				b.WriteString("█")
+			case top:
+				b.WriteString("▀")
+			case bot:
+				b.WriteString("▄")
+			default:
+				b.WriteByte(' ')
+			}
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
 
 type block struct{ count, data int }
 

@@ -20,10 +20,10 @@ const DEV_RE = /^[A-Za-z0-9_]{1,64}$/;
 const NUM_RE = /^(0|[1-9][0-9]{0,14})$/; // <= 15 digits, always exact in a double
 const MAX_BODY = 64 * 1024;
 const ID_RE = /^[A-Za-z0-9_-]{22}$/;
-const CODE_RE = /^[A-Z2-7]{8}$/;
+const CODE_RE = /^[A-Z2-7]{16}$/;
 const MSG_TTL_MS = 600_000;
 const MAX_MSGS = 50;
-const MAX_PAIRS = 50;
+const PAIR_TTL_MS = 600_000;
 const PUSH_MIN_GAP_MS = 10_000;
 const PUSH_HOSTS = new Set(["web.push.apple.com", "fcm.googleapis.com", "updates.push.services.mozilla.com"]);
 const PUSH_HOST_SUFFIX = ".notify.windows.com";
@@ -37,7 +37,7 @@ const dec = new TextDecoder();
 type Route =
   | "put-log" | "put-member" | "put-checkpoint" | "get-log" | "get-members" | "get-checkpoints" | "ws"
   | "put-msg" | "get-msgs" | "del-msg" | "put-view" | "get-views" | "put-push" | "del-push" | "put-pair" | "get-pair"
-  | "get-devices";
+  | "pair-open" | "get-devices";
 
 function routeOf(method: string, parts: string[]): Route | null {
   if (parts[0] !== "v") return null;
@@ -57,6 +57,7 @@ function routeOf(method: string, parts: string[]): Route | null {
   if (method === "GET" && kind === "view" && n === 4) return "get-views";
   if (method === "PUT" && kind === "push" && n === 4) return "put-push";
   if (method === "DELETE" && kind === "push" && n === 4) return "del-push";
+  if (method === "PUT" && kind === "pair-open" && n === 4) return "pair-open";
   if (method === "PUT" && kind === "pair" && n === 4) return "put-pair";
   if (method === "GET" && kind === "pair" && n === 4) return "get-pair";
   if (method === "GET" && kind === "devices" && n === 3) return "get-devices";
@@ -72,6 +73,8 @@ function bodyLimit(route: Route): number {
       return 16 * 1024;
     case "put-pair":
       return 1024;
+    case "pair-open":
+      return 0;
     default:
       return MAX_BODY;
   }
@@ -101,7 +104,8 @@ export default {
       if (Number(cl) > bodyLimit(route)) return text("too large", 413);
     }
     if (route !== "put-pair") {
-      // Pairing requests come from a device that has no key yet: no signature.
+      // put-pair is the only unsigned route: the phone has no key yet. It is accepted only into a
+      // slot the laptop opened (signed pair-open) and the DO enforces that.
       const h = checkHeaders(request);
       if (h instanceof Response) return h;
     }
@@ -276,7 +280,21 @@ export class VaultDO extends DurableObject<Env> {
     if (this.ready) {
       this.ensureV2();
       this.ensureV3();
+      this.ensureV4();
     }
+  }
+
+  /** Schema v4 (laptop-opened pairing slots): replaces the unsigned `pair` table. Idempotent; one transaction. */
+  private ensureV4(): void {
+    if (this.sql.exec(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pairslot'`).toArray().length > 0) return;
+    this.ctx.storage.transactionSync(() => this.createV4());
+  }
+
+  private createV4(): void {
+    this.sql.exec(`DROP TABLE IF EXISTS pair`);
+    this.sql.exec(
+      `CREATE TABLE pairslot(code TEXT PRIMARY KEY, opener TEXT NOT NULL, exp INTEGER NOT NULL, body TEXT, meta TEXT)`,
+    );
   }
 
   /** Schema v3 (device origin): pair.meta and the last-seen table. Idempotent; one transaction. */
@@ -324,6 +342,7 @@ export class VaultDO extends DurableObject<Env> {
     this.sql.exec(`INSERT INTO stats(id, rows, bytes) VALUES (1, 0, 0)`);
     this.createV2();
     this.createV3();
+    this.createV4();
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -368,6 +387,8 @@ export class VaultDO extends DurableObject<Env> {
         return this.putPush(parts[3], body, auth.dev);
       case "del-push":
         return this.delPush(parts[3], auth.dev);
+      case "pair-open":
+        return this.pairOpen(parts[3], auth);
       case "put-pair":
         return this.putPair(parts[3], body, originJSON(request));
       case "get-pair":
@@ -415,7 +436,8 @@ export class VaultDO extends DurableObject<Env> {
     parts: string[],
   ): Promise<Auth | Response> {
     if (route === "put-pair") {
-      // Unsigned by design: the pairing code is public, integrity comes from the 6-word check.
+      // Unsigned by design (the phone has no key); it only fills a slot opened by a key holder,
+      // integrity comes from the 6-word check.
       if (!this.ready) return text("not found", 404);
       return { dev: "", tms: 0, genesis: false, role: "" };
     }
@@ -450,6 +472,10 @@ export class VaultDO extends DurableObject<Env> {
 
     const found = this.lookup(dev);
     if (!found || !(await verifyEd25519(found.pub, sig, canonical))) return text("unauthorized", 401);
+    // Only an active key-holding device (not owner, not approver) opens or reads a pairing slot.
+    if ((route === "pair-open" || route === "get-pair") && (dev === "owner" || found.role !== "")) {
+      return text("forbidden", 403);
+    }
     // Devices may only write their own log/checkpoint. "owner" may write members only.
     if ((route === "put-log" || route === "put-checkpoint") && (dev === "owner" || parts[3] !== dev)) {
       return text("forbidden", 403);
@@ -767,27 +793,36 @@ export class VaultDO extends DurableObject<Env> {
     return new Response(null, { status: 204 });
   }
 
+  private pairOpen(code: string, auth: Auth): Response {
+    if (!CODE_RE.test(code)) return text("bad request", 400);
+    const now = Date.now();
+    this.sql.exec(`DELETE FROM pairslot WHERE exp <= ?`, now);
+    this.sql.exec(`DELETE FROM pairslot WHERE opener = ?`, auth.dev);
+    if (this.sql.exec(`SELECT 1 FROM pairslot WHERE code = ?`, code).toArray().length) return text("exists", 409);
+    this.sql.exec(`INSERT INTO pairslot(code, opener, exp) VALUES (?, ?, ?)`, code, auth.dev, now + PAIR_TTL_MS);
+    return text("ok", 201);
+  }
+
   private putPair(code: string, body: Uint8Array, meta: string): Response {
     if (!CODE_RE.test(code)) return text("bad request", 400);
     const line = dec.decode(body);
     if (!line) return text("bad request", 400);
-    const now = Date.now();
-    this.sql.exec(`DELETE FROM pair WHERE exp <= ?`, now);
-    if (this.sql.exec(`SELECT 1 FROM pair WHERE code = ?`, code).toArray().length) return text("exists", 409);
-    if ((this.sql.exec(`SELECT COUNT(*) AS c FROM pair`).one().c as number) >= MAX_PAIRS) {
-      return text("too many pairings", 429);
-    }
-    this.sql.exec(`INSERT INTO pair(code, body, exp, meta) VALUES (?, ?, ?, ?)`, code, line, now + MSG_TTL_MS, meta);
+    this.sql.exec(`DELETE FROM pairslot WHERE exp <= ?`, Date.now());
+    const rows = this.sql.exec(`SELECT body FROM pairslot WHERE code = ?`, code).toArray();
+    if (!rows.length) return text("not found", 404);
+    if (rows[0].body !== null) return text("exists", 409);
+    this.sql.exec(`UPDATE pairslot SET body = ?, meta = ? WHERE code = ?`, line, meta, code);
     return text("ok", 201);
   }
 
   private getPair(code: string, auth: Auth): Response {
-    if (auth.role === "approver") return text("forbidden", 403);
     if (!CODE_RE.test(code)) return text("bad request", 400);
-    this.sql.exec(`DELETE FROM pair WHERE exp <= ?`, Date.now());
-    const rows = this.sql.exec(`SELECT body, meta FROM pair WHERE code = ?`, code).toArray();
-    if (!rows.length) return text("not found", 404);
-    this.sql.exec(`DELETE FROM pair WHERE code = ?`, code);
+    this.sql.exec(`DELETE FROM pairslot WHERE exp <= ?`, Date.now());
+    const rows = this.sql.exec(`SELECT opener, body, meta FROM pairslot WHERE code = ?`, code).toArray();
+    // A slot of another device looks the same as a missing one.
+    if (!rows.length || rows[0].opener !== auth.dev) return text("not found", 404);
+    if (rows[0].body === null) return new Response(null, { status: 204 });
+    this.sql.exec(`DELETE FROM pairslot WHERE code = ?`, code);
     const res = text(rows[0].body as string, 200);
     const meta = (rows[0].meta as string | null) ?? "";
     if (meta) res.headers.set("KG-Pair-Origin", b64encode(enc.encode(meta)));

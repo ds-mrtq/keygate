@@ -182,13 +182,22 @@ func TestDiffAndWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := Diff(a, b)
-	if len(d) != 1 {
+	d := Changes(a, b)
+	if len(d) != 1 || d[0].Op != ChangeAdd || !d[0].Prod {
 		t.Fatalf("%v", d)
 	}
-	w := strings.Join(Warnings(b), "\n")
-	if !strings.Contains(w, "approval: none") || !strings.Contains(w, "PROD") || !strings.Contains(w, "glob") {
-		t.Fatalf("warnings: %s", w)
+	ws, kept := Warnings(a, b)
+	var wl []string
+	for _, x := range ws {
+		wl = append(wl, x.Text())
+	}
+	w := strings.Join(wl, "\n")
+	if !strings.Contains(w, "approval none") || !strings.Contains(w, "PROD") || !strings.Contains(w, "glob") || len(kept) != 0 {
+		t.Fatalf("warnings: %s kept=%v", w, kept)
+	}
+	// The same PROD grant approved before is not warned again.
+	if ws, kept := Warnings(b, b); len(kept) != 1 || len(ws) != 2 { // approval none + glob, no PROD warning
+		t.Fatalf("unchanged PROD grant: warns=%v kept=%v", ws, kept)
 	}
 }
 
@@ -215,5 +224,64 @@ func TestApprovalNoneNeedsHashPins(t *testing.T) {
 		if _, err := Parse([]byte(g)); err != nil {
 			t.Errorf("%q: %v", g, err)
 		}
+	}
+}
+
+func TestUnpinnedScriptWarningAndPinText(t *testing.T) {
+	d := filepath.ToSlash(t.TempDir())
+	script := d + "/job.py"
+	other := d + "/other.py"
+	for _, f := range []string{script, other} {
+		if err := os.WriteFile(f, []byte("print(1)"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := "# keep me\r\ngrants:\r\n  a/b:\r\n    allow_commands: [\"python path:" + script + "\", \"python path:" + other + " --x\", \"python path:" + d + "/*.py\", curl]  # c\r\n    approval: user-presence\r\n"
+	// loads fine without pins...
+	p, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("policy without sha256 must still load: %v", err)
+	}
+	// ...but Warnings reports the two single-file entries and the glob one
+	w, _ := Warnings(nil, p)
+	n := 0
+	for _, l := range w {
+		if strings.Contains(l.Msg, "script không ghim nội dung (sha256)") {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Fatalf("want 3 unpinned warnings, got %d: %v", n, w)
+	}
+	hash := func(path string) (string, error) { return "sha256:" + strings.Repeat("c", 64), nil }
+	out, ch, errs := PinText([]byte(src), hash)
+	if len(errs) != 0 || len(ch) != 2 {
+		t.Fatalf("changes %v errs %v", ch, errs)
+	}
+	h := "sha256:" + strings.Repeat("c", 64)
+	want := strings.Replace(src, "python path:"+script+"\"", "python path:"+script+" "+h+"\"", 1)
+	want = strings.Replace(want, "python path:"+other+" --x\"", "python path:"+other+" "+h+" --x\"", 1)
+	if string(out) != want {
+		t.Fatalf("pin text:\n%q\nwant\n%q", out, want)
+	}
+	p2, err := Parse(out)
+	if err != nil {
+		t.Fatalf("pinned policy: %v", err)
+	}
+	w2, _ := Warnings(nil, p2)
+	for _, l := range w2 {
+		if strings.Contains(l.Msg, "job.py") || strings.Contains(l.Msg, "other.py") {
+			t.Errorf("still warned: %s", l.Text())
+		}
+	}
+	// idempotent
+	out2, ch2, _ := PinText(out, hash)
+	if len(ch2) != 0 || string(out2) != string(out) {
+		t.Fatalf("second run must change nothing: %v", ch2)
+	}
+	// a changed script refreshes the pin
+	out3, ch3, _ := PinText(out, func(string) (string, error) { return "sha256:" + strings.Repeat("d", 64), nil })
+	if len(ch3) != 2 || strings.Contains(string(out3), strings.Repeat("c", 64)) {
+		t.Fatalf("refresh: %v", ch3)
 	}
 }

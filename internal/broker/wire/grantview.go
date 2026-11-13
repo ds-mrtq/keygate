@@ -8,6 +8,7 @@ type GrantView struct {
 	Secret   string     `json:"secret"`
 	Pattern  string     `json:"pattern"`
 	Path     string     `json:"path"`
+	Dir      string     `json:"dir,omitempty"` // canonical run directory the grant is bound to
 	Approval string     `json:"approval"`
 	By       string     `json:"by"`
 	At       time.Time  `json:"at"`

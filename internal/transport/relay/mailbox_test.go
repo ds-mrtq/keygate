@@ -2,6 +2,8 @@ package relay
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,7 +15,7 @@ import (
 
 func TestMailboxAndRetry(t *testing.T) {
 	id := store.NewIdentity("laptop")
-	var puts, first atomic.Int32
+	var puts, first, pairPolls atomic.Int32
 	var times []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		times = append(times, r.Header.Get("KG-Time"))
@@ -35,9 +37,19 @@ func TestMailboxAndRetry(t *testing.T) {
 			_, _ = w.Write([]byte(`{"msgs":[{"id":"i1","from":"dev_p","body":"{\"v\":1}"}]}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/v/vlt_x/msg/"+id.Dev+"/i1":
 			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodGet && r.URL.Path == "/v/vlt_x/pair/ABCD2345":
+		case r.Method == http.MethodPut && r.URL.Path == "/v/vlt_x/pair-open/ABCDEFGHABCDEFGH":
+			if r.ContentLength != 0 {
+				t.Errorf("pair-open body length %d", r.ContentLength)
+			}
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodGet && r.URL.Path == "/v/vlt_x/pair/ABCDEFGHABCDEFGH":
+			if pairPolls.Add(1) == 1 {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			w.Header().Set("KG-Pair-Origin", base64.StdEncoding.EncodeToString([]byte(`{"ip":"1.2.3.4"}`)))
 			_, _ = w.Write([]byte("code"))
-		case r.Method == http.MethodGet && r.URL.Path == "/v/vlt_x/pair/ZZZZZZZZ":
+		case r.Method == http.MethodGet && r.URL.Path == "/v/vlt_x/pair/ZZZZZZZZZZZZZZZZ":
 			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
@@ -59,11 +71,17 @@ func TestMailboxAndRetry(t *testing.T) {
 	if err := c.DeleteMsg(ctx, "i1"); err != nil {
 		t.Fatal(err)
 	}
-	if b, _, err := c.GetPair(ctx, "ABCD2345"); err != nil || string(b) != "code" {
-		t.Fatalf("pair %q %v", b, err)
+	if err := c.OpenPair(ctx, "ABCDEFGHABCDEFGH"); err != nil {
+		t.Fatalf("open pair: %v", err)
 	}
-	if _, _, err := c.GetPair(ctx, "ZZZZZZZZ"); err == nil {
-		t.Fatal("missing pair must error")
+	if _, _, ready, err := c.GetPair(ctx, "ABCDEFGHABCDEFGH"); err != nil || ready {
+		t.Fatalf("unfilled slot: ready=%v err=%v", ready, err)
+	}
+	if b, o, ready, err := c.GetPair(ctx, "ABCDEFGHABCDEFGH"); err != nil || !ready || string(b) != "code" || o.IP != "1.2.3.4" {
+		t.Fatalf("pair %q %+v %v %v", b, o, ready, err)
+	}
+	if _, _, _, err := c.GetPair(ctx, "ZZZZZZZZZZZZZZZZ"); !errors.Is(err, ErrPairGone) {
+		t.Fatalf("missing pair must be ErrPairGone, got %v", err)
 	}
 }
 

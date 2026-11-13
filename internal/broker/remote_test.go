@@ -570,11 +570,11 @@ func TestRemoteSetNeverLeaksValue(t *testing.T) {
 	const val, val2 = "v-PHONE-123", "v-OTHER-456"
 	r := newRemoteFix(t, rcfg{})
 	boot := r.waitView("first view", func(remote.View) bool { return true }).Boot
-	set := func(overwrite bool, v string) remote.CmdResult {
-		args, _ := json.Marshal(phoneSetArgs{Name: "demo/phone", Kind: "env", Env: "dev", EnvName: "PHONE_TOK", Value: v, Overwrite: overwrite})
+	set := func(v string) remote.CmdResult {
+		args, _ := json.Marshal(phoneSetArgs{Name: "demo/phone", Kind: "env", Env: "dev", EnvName: "PHONE_TOK", Value: v})
 		return r.result(r.command(boot, "set", string(args)))
 	}
-	if res := set(false, val); !res.OK {
+	if res := set(val); !res.OK {
 		t.Fatalf("set: %+v", res)
 	}
 	names, err := r.cli.List(context.Background())
@@ -588,13 +588,11 @@ func TestRemoteSetNeverLeaksValue(t *testing.T) {
 	if !found {
 		t.Fatalf("secret missing: %+v", names)
 	}
-	if res := set(false, "ignored"); res.OK || !strings.Contains(res.Msg, "đã tồn tại") {
-		t.Fatalf("overwrite without the flag must fail: %+v", res)
+	// A phone never overwrites: replacing a value is done at the machine only.
+	if res := set(val2); res.OK || !strings.Contains(res.Msg, "chỉ làm tại máy") {
+		t.Fatalf("overwrite from the phone must fail: %+v", res)
 	}
-	if res := set(true, val2); !res.OK {
-		t.Fatalf("overwrite: %+v", res)
-	}
-	r.waitView("results visible", func(v remote.View) bool { return len(v.Results) >= 3 })
+	r.waitView("results visible", func(v remote.View) bool { return len(v.Results) >= 2 })
 	for _, v := range r.seen {
 		for _, secret := range []string{val, val2} {
 			if bytes.Contains(v, []byte(secret)) {

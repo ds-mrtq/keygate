@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base32"
+	"encoding/base64"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
+	"time"
 
 	"keygate/internal/broker/wire"
 	"keygate/internal/store"
@@ -61,29 +64,73 @@ func PushMembersAsOwner(ctx context.Context, st *store.Store, via string, owner 
 	return st.MarkPushed(t.Name(), 0, uint64(first+len(lines)))
 }
 
-var pairCodeRE = regexp.MustCompile(`^[A-Z2-7]{8}$`)
+// PairTTL is how long the relay keeps a pairing slot open.
+const PairTTL = 10 * time.Minute
 
-// NormalizePairCode upper-cases the 8-character pairing code shown on the phone and drops spaces.
-func NormalizePairCode(pair string) string {
-	return strings.ToUpper(strings.Join(strings.Fields(pair), ""))
+const pairPoll = 2 * time.Second
+
+var pairB32 = base32.StdEncoding.WithPadding(base32.NoPadding)
+
+func pairClient(cfg store.VaultConfig, signer transport.Signer) (*relay.Client, error) {
+	if cfg.RelayURL == "" {
+		return nil, errors.New("vault chưa gắn relay: kg channel add --relay-url …")
+	}
+	return relay.New(cfg.RelayURL, cfg.Vault, signer, nil), nil
 }
 
-// FetchPair downloads (and consumes) the registration code a phone published on the relay under
-// the 8-character pairing code, with the origin of that publish request. It needs only the device
-// identity, no vault lock or owner keys.
-func FetchPair(ctx context.Context, cfg store.VaultConfig, signer transport.Signer, pair string) (string, relay.Origin, error) {
-	pair = NormalizePairCode(pair)
-	if !pairCodeRE.MatchString(pair) {
-		return "", relay.Origin{}, errors.New("mã ghép gồm 8 ký tự A-Z, 2-7 (hiện trên điện thoại)")
-	}
-	if cfg.RelayURL == "" {
-		return "", relay.Origin{}, errors.New("vault chưa gắn relay: kg channel add --relay-url …")
-	}
-	raw, o, err := relay.New(cfg.RelayURL, cfg.Vault, signer, nil).GetPair(ctx, pair)
+// OpenPair opens a pairing slot on the relay (signed by this key-holding device) and returns the
+// slot code, the nonce and the link the phone opens: <relay>/app/#v=<vault>&p=<pin>&c=<code>&n=<nonce>.
+// The nonce (16 random bytes, base64url) lives only in the link; it binds the confirmation words
+// (store.PairWords) and never reaches the relay. It needs only the device identity, no vault lock.
+func OpenPair(ctx context.Context, cfg store.VaultConfig, signer transport.Signer, pin string) (code, nonce, link string, err error) {
+	c, err := pairClient(cfg, signer)
 	if err != nil {
-		return "", o, err
+		return "", "", "", err
 	}
-	return strings.TrimSpace(string(raw)), o, nil
+	var rb [26]byte
+	if _, err := rand.Read(rb[:]); err != nil {
+		return "", "", "", err
+	}
+	code = pairB32.EncodeToString(rb[:10]) // 80 bits
+	nonce = base64.RawURLEncoding.EncodeToString(rb[10:])
+	if err := c.OpenPair(ctx, code); err != nil {
+		return "", "", "", err
+	}
+	link = fmt.Sprintf("%s/app/#v=%s&p=%s&c=%s&n=%s", strings.TrimRight(cfg.RelayURL, "/"), cfg.Vault, pin, code, nonce)
+	return code, nonce, link, nil
+}
+
+// WaitPair polls the slot opened by OpenPair every 2 seconds until the phone has published its
+// registration code (consumed on the relay) with the origin of that request. It fails when the
+// slot is gone (expired), after 5 consecutive network errors, or when ctx ends.
+func WaitPair(ctx context.Context, cfg store.VaultConfig, signer transport.Signer, code string) (string, relay.Origin, error) {
+	c, err := pairClient(cfg, signer)
+	if err != nil {
+		return "", relay.Origin{}, err
+	}
+	fails := 0
+	for {
+		raw, o, ready, err := c.GetPair(ctx, code)
+		switch {
+		case ctx.Err() != nil:
+			return "", relay.Origin{}, ctx.Err()
+		case errors.Is(err, relay.ErrPairGone):
+			return "", relay.Origin{}, errors.New("mã ghép hết hạn (10 phút): mở lại Ghép điện thoại")
+		case err != nil:
+			if fails++; fails >= 5 {
+				return "", relay.Origin{}, err
+			}
+		case ready:
+			return strings.TrimSpace(string(raw)), o, nil
+		default:
+			fails = 0
+		}
+		select {
+		case <-ctx.Done():
+			return "", relay.Origin{}, ctx.Err()
+		case <-time.After(pairPoll):
+		}
+	}
 }
 
 // Seen lists the last request (time, origin) of every device as the relay recorded it; nil

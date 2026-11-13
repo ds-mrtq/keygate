@@ -70,7 +70,7 @@ Dùng: kg <lệnh> [tham số]
   init | set | import | delete | list | session start|end | hash | same | cp | run | resolve | grant | reveal
   conflicts | resolve-conflict | sync | fingerprint
   device request|add|revoke | channel add | recover | approve
-  broker | grants [revoke] | tray (Windows: khay hệ thống, dùng kgw.exe) | policy apply | audit verify|show | hook check | mcp | lock | status
+  broker | grants [revoke] | tray (Windows: khay hệ thống, dùng kgw.exe) | policy apply|pin | audit verify|show | hook check | mcp | lock | status
 
 Xem docs/CLI.md để biết chi tiết.
 `

@@ -142,9 +142,29 @@ func (b *Broker) ownerSync(ctx context.Context, s *session) error {
 	return nil
 }
 
-// FetchPairCode downloads the registration code a phone published under the 8-character pairing
-// code (consumed on the relay: a second fetch fails) and the origin of that publish.
-func (b *Broker) FetchPairCode(ctx context.Context, pair string) (string, relay.Origin, error) {
+// OpenPair opens a pairing slot on the relay and returns the slot code, the nonce and the link for
+// the phone (QR). The slot lives 10 minutes (channel.PairTTL).
+func (b *Broker) OpenPair(ctx context.Context) (code, nonce, link string, err error) {
+	id := b.identity()
+	if id == nil {
+		return "", "", "", errors.New("broker chưa nạp khóa thiết bị")
+	}
+	cfg, err := store.ReadConfig(b.cfg.Home)
+	if err != nil {
+		return "", "", "", err
+	}
+	ms, err := store.ReadMembers(b.cfg.Home)
+	if err != nil {
+		return "", "", "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, ownerNetTimeout)
+	defer cancel()
+	return channel.OpenPair(ctx, cfg, id, store.GenesisPinOf(ms.Vault, ms.GenesisHash))
+}
+
+// WaitPair blocks until the phone publishes its registration code in the slot (consumed on the
+// relay) and returns it with the origin of that publish; ctx bounds the wait.
+func (b *Broker) WaitPair(ctx context.Context, code string) (string, relay.Origin, error) {
 	id := b.identity()
 	if id == nil {
 		return "", relay.Origin{}, errors.New("broker chưa nạp khóa thiết bị")
@@ -153,9 +173,7 @@ func (b *Broker) FetchPairCode(ctx context.Context, pair string) (string, relay.
 	if err != nil {
 		return "", relay.Origin{}, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, ownerNetTimeout)
-	defer cancel()
-	return channel.FetchPair(ctx, cfg, id, pair)
+	return channel.WaitPair(ctx, cfg, id, code)
 }
 
 // Seen is the relay's last-request record of every device (display only).

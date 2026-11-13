@@ -129,9 +129,9 @@ type iconInfo struct {
 // TrayHandlers are the menu actions; each one runs in its own goroutine. A nil ApprovePending
 // hides the "Yêu cầu chờ duyệt" entry.
 type TrayHandlers struct {
-	State                                                              func() broker.UIState
-	StartSession, EndSession, Lock, ApprovePending, AddSecret, Devices func()
-	OpenLog, Quit                                                      func()
+	State                                                                       func() broker.UIState
+	StartSession, EndSession, Lock, ApprovePending, AddSecret, Secrets, Devices func()
+	OpenLog, Quit                                                               func()
 }
 
 // Tray is the notification-area icon.
@@ -325,6 +325,7 @@ const (
 	cmdEnd
 	cmdLock
 	cmdAdd
+	cmdSecrets
 	cmdDevices
 	cmdLog
 	cmdQuit
@@ -352,6 +353,7 @@ func (t *Tray) showMenu() {
 		add(mfString, cmdLock, "Khóa")
 	}
 	add(mfSep, 0, "")
+	add(mfString, cmdSecrets, "Secret…")
 	add(mfString, cmdAdd, "Thêm secret…")
 	add(mfString, cmdDevices, "Thiết bị…")
 	add(mfString, cmdLog, "Nhật ký broker")
@@ -374,6 +376,8 @@ func (t *Tray) showMenu() {
 		f = t.h.Lock
 	case cmdAdd:
 		f = t.h.AddSecret
+	case cmdSecrets:
+		f = t.h.Secrets
 	case cmdDevices:
 		f = t.h.Devices
 	case cmdLog:

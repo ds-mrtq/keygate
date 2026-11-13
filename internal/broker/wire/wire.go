@@ -80,6 +80,7 @@ type GrantArgs struct {
 	Secret string   `json:"secret"`
 	Argv   []string `json:"argv"`
 	Agent  string   `json:"agent,omitempty"`
+	Dir    string   `json:"dir,omitempty"` // run directory the grant is for (empty = broker cwd)
 }
 
 // GrantsRevokeArgs revokes every stored grant of Secret, or all grants when All is set.

@@ -14,8 +14,10 @@ import (
 	"keygate/internal/api"
 	"keygate/internal/broker"
 	"keygate/internal/broker/wire"
+	"keygate/internal/fsx"
 	"keygate/internal/hook"
 	"keygate/internal/mcp"
+	"keygate/internal/policy"
 	"keygate/internal/store"
 )
 
@@ -303,13 +305,13 @@ func (a *app) cmdGrants(args []string) error {
 			return nil
 		}
 		tw := tabwriter.NewWriter(a.out, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "SECRET\tMẪU LỆNH\tDUYỆT\tBỞI\tLÚC\tHẾT HẠN\tBỀN")
+		fmt.Fprintln(tw, "SECRET\tMẪU LỆNH\tTHƯ MỤC\tDUYỆT\tBỞI\tLÚC\tHẾT HẠN\tBỀN")
 		for _, g := range l {
 			exp := "không hết hạn"
 			if g.Expires != nil {
 				exp = g.Expires.Local().Format(time.DateTime)
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\tby=%s\t%s\t%s\t%v\n", g.Secret, g.Pattern, g.Approval, g.By, g.At.Local().Format(time.DateTime), exp, g.Durable)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\tby=%s\t%s\t%s\t%v\n", g.Secret, g.Pattern, g.Dir, g.Approval, g.By, g.At.Local().Format(time.DateTime), exp, g.Durable)
 		}
 		return tw.Flush()
 	}
@@ -338,14 +340,57 @@ func (a *app) cmdGrants(args []string) error {
 }
 
 func (a *app) cmdPolicy(args []string) error {
+	if len(args) > 0 && args[0] == "pin" {
+		return a.cmdPolicyPin(args[1:])
+	}
 	if len(args) != 1 || args[0] != "apply" {
-		return errors.New("dùng: kg policy apply")
+		return errors.New("dùng: kg policy apply | kg policy pin [--dry-run] <policy.yaml>")
 	}
 	r, err := a.client().PolicyApply(context.Background())
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(a.out, "Đã ghim policy.yaml (%d grant, %s)\n", r.Grants, r.Hash)
+	return nil
+}
+
+// cmdPolicyPin adds/refreshes `sha256:` after each non-glob path: token of interpreter/shell entries
+// of a policy file. It only edits the file; `kg policy apply` (Hello) is a separate, human step.
+func (a *app) cmdPolicyPin(args []string) error {
+	fs := newFS("policy pin", a.errw)
+	dry := fs.Bool("dry-run", false, "chỉ in thay đổi, không ghi file")
+	pos, err := parseArgs(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return errors.New("dùng: kg policy pin [--dry-run] <policy.yaml>")
+	}
+	data, err := os.ReadFile(pos[0])
+	if err != nil {
+		return err
+	}
+	out, changes, errs := policy.PinText(data, allowlist.FileHash)
+	for _, c := range changes {
+		fmt.Fprintf(a.out, "- %s\n+ %s\n", c.Old, c.New)
+	}
+	for _, e := range errs {
+		fmt.Fprintf(a.errw, "bỏ qua: %v\n", e)
+	}
+	switch {
+	case len(changes) == 0:
+		fmt.Fprintln(a.out, "Không có mục nào cần ghim thêm.")
+	case *dry:
+		fmt.Fprintf(a.out, "(dry-run) %d mục sẽ đổi, file chưa bị sửa.\n", len(changes))
+	default:
+		if err := fsx.WriteAtomic(pos[0], out); err != nil {
+			return err
+		}
+		fmt.Fprintf(a.out, "Đã ghim %d mục trong %s. Kiểm tra bằng git diff rồi chạy `kg policy apply` (cần Windows Hello).\n", len(changes), pos[0])
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%d mục không ghim được (xem các dòng \"bỏ qua\")", len(errs))
+	}
 	return nil
 }
 

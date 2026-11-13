@@ -93,6 +93,8 @@
     "add_body_json": "{\"dev\":\"dev_approver22\",\"label\":\"iphone\",\"ed_pub\":\"ujxzXNvkI15srfgcQSuIOjRy0QRfrqGJ9YT4vspG40M=\",\"x_pub\":\"zXAOiPnpmxnBqKjc1YGC/RAeXgMqac4xf94j6O4mXFE=\",\"role\":\"approver\"}",
     "code": "PMRGIZLWEI5CEZDFOZPWC4DQOJXXMZLSGIZCELBCNRQWEZLMEI5CE2LQNBXW4ZJCFQRGKZC7OB2WEIR2EJ2WU6D2LBHHM22JGE2XG4TGM5RVCU3VJFHWUUTZGBIVEZTSOFDUUOKZKQ2HM43QI42DATJ5EIWCE6C7OB2WEIR2EJ5FQQKPNFIG44DNPBXEE4KLNJRTCWKHIMXVEQLFLBTU24LBMM2HQZRZGRVDMTZUNVMEMRJ5EIWCE4TPNRSSEORCMFYHA4TPOZSXEIT5",
     "words": "bucket reef oasis magnet garlic chair",
+    "pair_nonce": "AAECAwQFBgcICQoLDA0ODw",
+    "pair_words": "acorn kettle echo yarrow crane cargo",
     "genesis_pin": "RZW2-WXKG-BP4X-EUGB-C2GO-NJ5L"
   },
   "revoke_approver": {

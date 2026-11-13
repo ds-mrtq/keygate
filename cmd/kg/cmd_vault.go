@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"keygate/internal/channel"
 	"keygate/internal/kcrypto"
 	"keygate/internal/members"
+	"keygate/internal/qr"
 	"keygate/internal/recovery"
 	"keygate/internal/store"
 	"keygate/internal/transport"
@@ -152,15 +154,15 @@ func (a *app) ownerKeys(st *store.Store) (*recovery.Keys, error) {
 
 func (a *app) cmdDevice(args []string) error {
 	if len(args) == 0 {
-		return errors.New("dùng: kg device request|add|list|pair-url|revoke")
+		return errors.New("dùng: kg device request|add|pair|list|revoke")
 	}
 	switch args[0] {
 	case "request":
 		return a.deviceRequest(args[1:])
 	case "add":
 		return a.deviceAdd(args[1:])
-	case "pair-url":
-		return a.devicePairURL(args[1:])
+	case "pair":
+		return a.devicePair(args[1:])
 	case "list":
 		return a.deviceList(args[1:])
 	case "revoke":
@@ -353,82 +355,85 @@ func (a *app) syncAfterOwnerOp(st *store.Store) {
 	fmt.Fprintln(a.out, "Nếu broker đang chạy, chạy `kg lock` để nó nạp lại trạng thái thành viên mới.")
 }
 
-// fetchPairCode downloads the registration code a phone published under the 8-char pairing code.
-// It only needs the device identity and vault.json (no vault lock, no owner keys).
-func (a *app) fetchPairCode(pair string) (string, relay.Origin, error) {
-	cfg, err := store.ReadConfig(a.home)
-	if err != nil {
-		return "", relay.Origin{}, err
-	}
-	ks, err := a.openKeys()
-	if err != nil {
-		return "", relay.Origin{}, err
-	}
-	id, err := store.LoadIdentity(a.home, ks)
-	if err != nil {
-		return "", relay.Origin{}, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	return channel.FetchPair(ctx, cfg, id, pair)
-}
-
-// pairURL is the link that opens the phone web app pre-filled with vault and genesis pin.
-func pairURL(home string) (string, error) {
-	cfg, err := store.ReadConfig(home)
-	if err != nil {
-		return "", err
-	}
-	if cfg.RelayURL == "" {
-		return "", errors.New("vault chưa gắn relay: kg channel add --relay-url …")
-	}
-	pin, err := genesisPin(home)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s/app/#v=%s&p=%s", strings.TrimRight(cfg.RelayURL, "/"), cfg.Vault, pin), nil
-}
-
-// devicePairURL prints pairURL.
-func (a *app) devicePairURL(args []string) error {
-	fs := newFS("device pair-url", a.errw)
+// devicePair pairs a phone (approver device): it opens a slot on the relay, prints the link and QR
+// the phone opens, waits for the phone's registration code and then asks the owner to compare the
+// 6 words (bound to the link's nonce). Full-device codes are refused here: they go through
+// `kg device add <mã đăng ký>`. It needs the device identity and vault.json, not the vault lock.
+func (a *app) devicePair(args []string) error {
+	fs := newFS("device pair", a.errw)
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
-	u, err := pairURL(a.home)
+	cfg, err := store.ReadConfig(a.home)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(a.out, u)
-	return nil
+	pin, err := genesisPin(a.home)
+	if err != nil {
+		return err
+	}
+	ks, err := a.openKeys()
+	if err != nil {
+		return err
+	}
+	id, err := store.LoadIdentity(a.home, ks)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, channel.PairTTL)
+	defer cancel()
+	code, nonce, link, err := channel.OpenPair(ctx, cfg, id, pin)
+	if err != nil {
+		return err
+	}
+	if q, err := qr.Encode([]byte(link)); err == nil {
+		fmt.Fprintln(a.out, q.Text())
+	}
+	fmt.Fprintf(a.out, "Quét mã QR bằng Camera của iPhone, hoặc mở liên kết trong Safari:\n\n%s\n\n", link)
+	fmt.Fprintln(a.out, "Đang chờ điện thoại gửi mã đăng ký (tối đa 10 phút, Ctrl+C để hủy)…")
+	reg, origin, err := channel.WaitPair(ctx, cfg, id, code)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return errors.New("mã ghép hết hạn sau 10 phút: chạy lại kg device pair")
+		}
+		return err
+	}
+	body, err := store.DecodeRequest(reg)
+	if err != nil {
+		return err
+	}
+	if body.Role != members.RoleApprover {
+		return errors.New("mã này là thiết bị đầy đủ; kg device pair chỉ ghép điện thoại duyệt, thiết bị đầy đủ dùng `kg device add <mã đăng ký>`")
+	}
+	if from := origin.Summary(); from != "" {
+		fmt.Fprintf(a.out, "Mã gửi từ: %s\n", from)
+	}
+	return a.addDevice(body, origin, store.PairWords(reg, nonce), "kg device pair")
 }
 
 func (a *app) deviceAdd(args []string) error {
 	fs := newFS("device add", a.errw)
-	pair := fs.String("pair", "", "mã ghép 8 ký tự hiện trên điện thoại")
 	pos, err := parseArgs(fs, args)
 	if err != nil {
 		return err
 	}
-	var code string
-	var origin relay.Origin
-	switch {
-	case *pair != "" && len(pos) > 0:
-		return errors.New("dùng một trong hai: kg device add <mã đăng ký> hoặc kg device add --pair <mã ghép>")
-	case *pair != "":
-		if code, origin, err = a.fetchPairCode(*pair); err != nil {
-			return err
-		}
-	case len(pos) == 0:
-		return errors.New("dùng: kg device add <mã đăng ký> | kg device add --pair <mã ghép>")
-	default:
-		code = strings.Join(pos, "")
+	if len(pos) == 0 {
+		return errors.New("dùng: kg device add <mã đăng ký> (điện thoại duyệt: kg device pair)")
 	}
+	code := strings.Join(pos, "")
 	body, err := store.DecodeRequest(code)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.out, "Thiết bị %s (%s). 6 từ xác nhận: %s\n", body.Dev, body.Label, store.RequestWords(code))
+	return a.addDevice(body, relay.Origin{}, store.RequestWords(code), "kg device add")
+}
+
+// addDevice shows the confirmation words, asks for a typed "yes", then adds the device with the
+// owner keys, audits it and publishes the member events.
+func (a *app) addDevice(body members.AddBody, origin relay.Origin, words, peer string) error {
+	fmt.Fprintf(a.out, "Thiết bị %s (%s). 6 từ xác nhận: %s\n", body.Dev, body.Label, words)
 	if body.Role == members.RoleApprover {
 		fmt.Fprintln(a.out, "THIẾT BỊ DUYỆT: không nhận vault key, chỉ ký duyệt và gửi lệnh.")
 	}
@@ -451,7 +456,7 @@ func (a *app) deviceAdd(args []string) error {
 	if err := st.AddDevice(keys.OwnerPriv, body); err != nil {
 		return err
 	}
-	a.auditOwner(st, audit.Entry{Event: audit.EvDeviceAdd, Argv: broker.PairArgv(body, origin), Approval: "owner", Peer: "kg device add"})
+	a.auditOwner(st, audit.Entry{Event: audit.EvDeviceAdd, Argv: broker.PairArgv(body, origin), Approval: "owner", Peer: peer})
 	fmt.Fprintf(a.out, "Đã thêm %s vào vault.\n", body.Dev)
 	fmt.Fprintf(a.out, "Mã ghim genesis (kiểm bằng kênh khác; máy mới chạy): kg sync --vault %s --pin %s\n", st.Vault(), st.GenesisPin())
 	if err := channel.PushMembersAsOwner(context.Background(), st, "", keys.OwnerPriv); err != nil {

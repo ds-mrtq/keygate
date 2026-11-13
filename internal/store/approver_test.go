@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,5 +95,19 @@ func TestRevokeApprover(t *testing.T) {
 	}
 	if len(ms.Wraps[2]) != 2 { // laptop + recovery
 		t.Fatalf("wraps in epoch 2: %d", len(ms.Wraps[2]))
+	}
+}
+
+func TestPairWords(t *testing.T) {
+	const code, nonce = "PMRGIZLWEI5CEZDF", "AAECAwQFBgcICQoLDA0ODw"
+	w := PairWords(code, nonce)
+	if len(strings.Fields(w)) != 6 {
+		t.Fatalf("want 6 words, got %q", w)
+	}
+	if w != PairWords(" "+strings.ToLower(code[:4])+" "+code[4:], nonce) {
+		t.Fatal("code is normalised (case, spaces)")
+	}
+	if w == PairWords(code, "AAECAwQFBgcICQoLDA0ODx") || w == RequestWords(code) {
+		t.Fatal("words must depend on the nonce")
 	}
 }

@@ -255,21 +255,44 @@ await check("view put/get, have filter, 200 KiB body", async () => {
 });
 await check("approver writes view -> 403", () => expect(call("PUT", V + `/view/${APR}`, "v", APR, apr), 403));
 await check("view body 300 KiB -> 413", () => expect(call("PUT", V + `/view/${APR}`, "x".repeat(300 * 1024), DEV, dev), 413));
-await check("pair: unsigned put 201, get once, then 404", async () => {
-  await expect(pairPut("ABCDEFGH"), 201);
-  await expect(pairPut("ABCDEFGH"), 409);
-  await expect(pairPut("ABCDEFG1"), 400);
-  await expect(pairPut("ZZZZZZZZ", "x".repeat(2048)), 413);
-  await expect(call("GET", V + "/pair/ABCDEFGH", "", APR, apr), 403);
-  const r = await expect(call("GET", V + "/pair/ABCDEFGH", "", DEV, dev), 200);
+const pairOpen = (code, id = DEV, key = dev) => call("PUT", V + "/pair-open/" + code, "", id, key);
+const pairGet = (code, id = DEV, key = dev) => call("GET", V + "/pair/" + code, "", id, key);
+await check("pair: unsigned put without an open slot -> 404", async () => {
+  await expect(pairPut("ABCDEFGHABCDEFGH"), 404);
+  await expect(pairPut("ABCDEFGH"), 400);
+});
+await check("pair-open: approver/owner -> 403, bad code -> 400, unsigned -> 401", async () => {
+  await expect(pairOpen("ABCDEFGHABCDEFGH", APR, apr), 403);
+  await expect(pairOpen("ABCDEFGHABCDEFGH", "owner", owner), 403);
+  await expect(pairOpen("ABCDEFG1ABCDEFGH"), 400);
+  assert.equal((await fetch(BASE + V + "/pair-open/ABCDEFGHABCDEFGH", { method: "PUT", body: "" })).status, 401);
+});
+await check("pair: open, get before fill 204, fill 201, refill 409, get 200 then 404", async () => {
+  await expect(pairOpen("ABCDEFGHABCDEFGH"), 201);
+  await expect(pairGet("ABCDEFGHABCDEFGH"), 204);
+  await expect(call("GET", V + "/pair/ABCDEFGHABCDEFGH", "", APR, apr), 403);
+  await expect(pairPut("ABCDEFGHABCDEFGH", "x".repeat(2048)), 413);
+  await expect(pairPut("ABCDEFGHABCDEFGH"), 201);
+  await expect(pairPut("ABCDEFGHABCDEFGH", "OTHER"), 409);
+  const r = await expect(pairGet("ABCDEFGHABCDEFGH"), 200);
   assert.equal(r.text, "REGCODE");
-  await expect(call("GET", V + "/pair/ABCDEFGH", "", DEV, dev), 404);
+  await expect(pairGet("ABCDEFGHABCDEFGH"), 404);
+  await expect(pairPut("ABCDEFGHABCDEFGH"), 404);
+});
+await check("pair-open: second open by the same device replaces the first; code collision 409", async () => {
+  await expect(pairOpen("AAAAAAAAAAAAAAAA"), 201);
+  await expect(pairOpen("BBBBBBBBBBBBBBBB"), 201);
+  await expect(pairPut("AAAAAAAAAAAAAAAA"), 404);
+  await expect(pairGet("AAAAAAAAAAAAAAAA"), 404);
+  await expect(pairPut("BBBBBBBBBBBBBBBB"), 201);
+  await expect(pairGet("BBBBBBBBBBBBBBBB"), 200);
 });
 await check("origin: pair keeps the gate's origin (client header ignored), devices list for key holders", async () => {
+  await expect(pairOpen("ORIGINAAORIGINAA"), 201);
   const spoof = Buffer.from(JSON.stringify({ ip: "6.6.6.6", ua: "spoof" })).toString("base64");
-  const put = await fetch(BASE + V + "/pair/ORIGINAA", { method: "PUT", body: "REG", headers: { "KG-Origin": spoof, "User-Agent": "kg-smoke-phone" } });
+  const put = await fetch(BASE + V + "/pair/ORIGINAAORIGINAA", { method: "PUT", body: "REG", headers: { "KG-Origin": spoof, "User-Agent": "kg-smoke-phone" } });
   assert.equal(put.status, 201);
-  const path = V + "/pair/ORIGINAA";
+  const path = V + "/pair/ORIGINAAORIGINAA";
   const res = await fetch(BASE + path, { headers: headers("GET", path, Buffer.from(""), DEV, dev, nextTime(DEV)) });
   assert.equal(res.status, 200);
   const o = JSON.parse(Buffer.from(res.headers.get("KG-Pair-Origin"), "base64").toString());
@@ -279,11 +302,6 @@ await check("origin: pair keeps the gate's origin (client header ignored), devic
   const me = j.devices.find((d) => d.dev === DEV);
   assert.ok(me && me.t > 0 && typeof me.ip === "string");
   await expect(call("GET", V + "/devices", "", APR, apr), 403);
-});
-await check("pair: 51st pending code -> 429", async () => {
-  const code = (i) => "AAAAAA" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[Math.floor(i / 26)] + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[i % 26];
-  for (let i = 0; i < 50; i++) await expect(pairPut(code(i)), 201);
-  await expect(pairPut(code(50)), 429);
 });
 await check("push: foreign host -> 400, apple host -> 200, other dev -> 403, delete 204", async () => {
   await expect(call("PUT", V + `/push/${APR}`, JSON.stringify({ endpoint: "https://evil.example.com/x" }), APR, apr), 400);
@@ -337,8 +355,23 @@ await check("revoke: revoked device is rejected, owner still works", async () =>
   await expect(call("PUT", V + "/members/9", rev.line, "owner", owner), 201);
   const ep2 = member(10, rev.hash, "epoch", { epoch: 3, wraps: [] });
   await expect(call("PUT", V + "/members/10", ep2.line, "owner", owner), 201);
+  tail = ep2;
   await expect(call("GET", V + "/checkpoints", "", DEV, dev), 401);
   await expect(call("GET", V + "/checkpoints", "", "owner", owner), 200);
+});
+
+await check("pair: another key-holder device cannot read the slot", async () => {
+  const k2 = newKey(), k3 = newKey();
+  const D2 = "dev_smoketest2", D3 = "dev_smoketest3";
+  const a2 = member(11, tail.hash, "add", { dev: D2, label: "two", ed_pub: k2.pub.toString("base64"), x_pub: "AAAA" });
+  await expect(call("PUT", V + "/members/11", a2.line, "owner", owner), 201);
+  const a3 = member(12, a2.hash, "add", { dev: D3, label: "three", ed_pub: k3.pub.toString("base64"), x_pub: "AAAA" });
+  await expect(call("PUT", V + "/members/12", a3.line, "owner", owner), 201);
+  await expect(pairOpen("CCCCCCCCCCCCCCCC", D2, k2), 201);
+  await expect(pairPut("CCCCCCCCCCCCCCCC"), 201);
+  await expect(pairGet("CCCCCCCCCCCCCCCC", D3, k3), 404);
+  const r = await expect(pairGet("CCCCCCCCCCCCCCCC", D2, k2), 200);
+  assert.equal(r.text, "REGCODE");
 });
 
 console.log(`\n${passed} checks passed` + (process.exitCode ? ", some FAILED" : ""));

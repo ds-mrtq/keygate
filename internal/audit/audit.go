@@ -48,6 +48,7 @@ type Entry struct {
 	Secret   string   `json:"secret,omitempty"`
 	Env      string   `json:"env,omitempty"`
 	Argv     []string `json:"argv,omitempty"`
+	Dir      string   `json:"dir,omitempty"` // canonical working directory of a grant/run
 	Agent    string   `json:"agent,omitempty"`
 	Peer     string   `json:"peer,omitempty"` // calling process (pid/exe) when the OS tells
 	Session  string   `json:"session,omitempty"`

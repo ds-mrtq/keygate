@@ -349,15 +349,14 @@ type revokeArgs struct {
 }
 
 type phoneSetArgs struct {
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Env       string `json:"env"`
-	EnvName   string `json:"env_name"`
-	TNSAlias  string `json:"tns_alias"`
-	User      string `json:"user"`
-	Desc      string `json:"desc"`
-	Value     string `json:"value"`
-	Overwrite bool   `json:"overwrite"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Env      string `json:"env"`
+	EnvName  string `json:"env_name"`
+	TNSAlias string `json:"tns_alias"`
+	User     string `json:"user"`
+	Desc     string `json:"desc"`
+	Value    string `json:"value"`
 }
 
 // handleCommand runs an approver-signed command. The value of a `set` never reaches a log, a result
@@ -434,8 +433,10 @@ func (b *Broker) phoneSet(s *session, a phoneSetArgs, by string) error {
 	if err := b.validateSet(&r); err != nil {
 		return err
 	}
-	if b.exists(s, r.Name) && !a.Overwrite {
-		return errors.New("secret đã tồn tại")
+	// Overwriting an existing secret is done at the machine only (DESIGN sec 9): a stolen phone must
+	// not be able to replace a token or endpoint that later `kg run` calls send out.
+	if b.exists(s, r.Name) {
+		return errors.New("secret đã tồn tại; ghi đè chỉ làm tại máy")
 	}
 	if err := b.storeSecret(s, r, a.Value, audit.EvSet, "", by); err != nil {
 		return errors.New("không lưu được secret")

@@ -22,6 +22,7 @@ import (
 type grantEntry struct {
 	api.GrantInfo           // Secret, Pattern, Approval, Expires (zero = never expires)
 	Path          string    // resolved program path (third part of grantKey)
+	Dir           string    // canonical run directory (fourth part of grantKey)
 	By            string    // "hello" | "paste:<dev>" | "remote:<dev>" | "session" | "none"
 	At            time.Time // when it was granted
 	Durable       bool
@@ -31,7 +32,7 @@ type grantEntry struct {
 func (g grantEntry) live(now time.Time) bool { return g.Expires.IsZero() || g.Expires.After(now) }
 
 func (g grantEntry) view() wire.GrantView {
-	v := wire.GrantView{Secret: g.Secret, Pattern: g.Pattern, Path: g.Path, Approval: g.Approval, By: g.By, At: g.At, Durable: g.Durable}
+	v := wire.GrantView{Secret: g.Secret, Pattern: g.Pattern, Path: g.Path, Dir: g.Dir, Approval: g.Approval, By: g.By, At: g.At, Durable: g.Durable}
 	if !g.Expires.IsZero() {
 		e := g.Expires
 		v.Expires = &e
@@ -54,6 +55,7 @@ type grantRec struct {
 	Secret   string     `json:"secret"`
 	Pattern  string     `json:"pattern"`
 	Path     string     `json:"path"`
+	Dir      string     `json:"dir,omitempty"`
 	Approval string     `json:"approval"`
 	By       string     `json:"by"`
 	At       time.Time  `json:"at"`
@@ -77,7 +79,11 @@ func unixOrZero(t *time.Time) uint64 {
 func grantsMAC(key []byte, vault, dev string, recs []grantRec) []byte {
 	e := kcrypto.NewEnc(kcrypto.LabelLocalMac).LPS("grants").LPS(vault).LPS(dev)
 	for _, r := range recs {
-		e.LPS(r.Secret).LPS(r.Pattern).LPS(r.Path).LPS(r.Approval).LPS(r.By).U64(uint64(r.At.Unix())).U64(unixOrZero(r.Expires))
+		e.LPS(r.Secret).LPS(r.Pattern).LPS(r.Path)
+		if r.Dir != "" { // records without dir (older files) keep their original MAC input
+			e.LPS(r.Dir)
+		}
+		e.LPS(r.Approval).LPS(r.By).U64(uint64(r.At.Unix())).U64(unixOrZero(r.Expires))
 	}
 	return kcrypto.MAC(key, e.Bytes())
 }
@@ -91,7 +97,10 @@ func sortRecs(recs []grantRec) {
 		if a.Pattern != b.Pattern {
 			return a.Pattern < b.Pattern
 		}
-		return a.Path < b.Path
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		return a.Dir < b.Dir
 	})
 }
 
@@ -105,7 +114,7 @@ func (b *Broker) persistGrants() {
 		if !g.Durable {
 			continue
 		}
-		r := grantRec{Secret: g.Secret, Pattern: g.Pattern, Path: g.Path, Approval: g.Approval, By: g.By, At: g.At.UTC().Truncate(time.Second)}
+		r := grantRec{Secret: g.Secret, Pattern: g.Pattern, Path: g.Path, Dir: g.Dir, Approval: g.Approval, By: g.By, At: g.At.UTC().Truncate(time.Second)}
 		if !g.Expires.IsZero() {
 			e := g.Expires.UTC().Truncate(time.Second)
 			r.Expires = &e
@@ -164,11 +173,14 @@ func (b *Broker) loadGrants() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, r := range recs {
-		g := grantEntry{GrantInfo: api.GrantInfo{Secret: r.Secret, Pattern: r.Pattern, Approval: r.Approval}, Path: r.Path, By: r.By, At: r.At, Durable: true}
+		if r.Dir == "" {
+			continue // granted before grants were bound to a directory: never matches, ask again
+		}
+		g := grantEntry{GrantInfo: api.GrantInfo{Secret: r.Secret, Pattern: r.Pattern, Approval: r.Approval}, Path: r.Path, Dir: r.Dir, By: r.By, At: r.At, Durable: true}
 		if r.Expires != nil {
 			g.Expires = *r.Expires
 		}
-		b.grants[grantKey{r.Secret, r.Pattern, r.Path}] = g
+		b.grants[grantKey{r.Secret, r.Pattern, r.Path, r.Dir}] = g
 	}
 }
 
@@ -191,7 +203,10 @@ func (b *Broker) grantViews() []wire.GrantView {
 		if a.Pattern != c.Pattern {
 			return a.Pattern < c.Pattern
 		}
-		return a.Path < c.Path
+		if a.Path != c.Path {
+			return a.Path < c.Path
+		}
+		return a.Dir < c.Dir
 	})
 	return out
 }

@@ -31,6 +31,16 @@ func RequestWords(code string) string {
 	return Words(sum[:])
 }
 
+const labelPairWords = "kg/v1/pair-words\x00"
+
+// PairWords are the 6 confirmation words of a phone pairing: the registration code bound to the
+// nonce the laptop put in the pairing link (the nonce never reaches the relay, so a relay cannot
+// search for a replacement code whose plain RequestWords collide).
+func PairWords(code, nonce string) string {
+	sum := sha256.Sum256(kcrypto.NewEnc(labelPairWords).LPS(nonce).LPS(normalizeCode(code)).Bytes())
+	return Words(sum[:])
+}
+
 // DecodeRequest parses and validates a registration code.
 func DecodeRequest(code string) (members.AddBody, error) {
 	var b members.AddBody

@@ -9,11 +9,17 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
+	"keygate/internal/approve"
 	"keygate/internal/broker"
+	"keygate/internal/channel"
 	"keygate/internal/members"
 	"keygate/internal/store"
+	"keygate/internal/transport/relay"
 	"keygate/internal/wingui"
 )
 
@@ -35,17 +41,34 @@ func openTrayLog(home string) (*os.File, error) {
 	return os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 }
 
+// tsWriter stamps every entry of broker.log with the local time (wingui.LogTimeLayout). Each Write
+// is one entry; lines after the first in a Write stay unstamped and continue that entry.
+type tsWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (t *tsWriter) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, err := io.WriteString(t.w, time.Now().Format(wingui.LogTimeLayout)+" "); err != nil {
+		return 0, err
+	}
+	return t.w.Write(p)
+}
+
 // cmdTray runs the broker with a notification-area icon instead of a terminal (kgw.exe tray).
 func (a *app) cmdTray(args []string) error {
 	fs := newFS("tray", a.errw)
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
 	}
-	logf, err := openTrayLog(a.home)
+	logFile, err := openTrayLog(a.home)
 	if err != nil {
 		return err
 	}
-	defer logf.Close()
+	defer logFile.Close()
+	logf := &tsWriter{w: logFile}
 	ctx := a.brokerCtx
 	if ctx == nil {
 		ctx = context.Background()
@@ -88,24 +111,27 @@ func (a *app) cmdTray(args []string) error {
 			}
 		}
 	}
+	addSecret := func() (string, error) {
+		r, err := wingui.AddSecretMeta(ctx)
+		if err != nil {
+			return "", err
+		}
+		v, err := wingui.Secret(ctx, "Giá trị cho "+r.Name)
+		if err != nil {
+			return "", err
+		}
+		return r.Name, b.SetFromUI(ctx, r, v)
+	}
 	h := wingui.TrayHandlers{
 		State:        b.UIState,
 		StartSession: func() { report(b.StartSession(ctx, "tray")) },
 		EndSession:   func() { b.EndSession("tray") },
 		Lock:         b.Lock,
 		AddSecret: func() {
-			report(func() error {
-				r, err := wingui.AddSecretMeta(ctx)
-				if err != nil {
-					return err
-				}
-				v, err := wingui.Secret(ctx, "Giá trị cho "+r.Name)
-				if err != nil {
-					return err
-				}
-				return b.SetFromUI(ctx, r, v)
-			}())
+			_, err := addSecret()
+			report(err)
 		},
+		Secrets:        func() { report(traySecrets(ctx, b, logf, addSecret)) },
 		ApprovePending: func() { report(b.ApprovePendingLocal(ctx)) },
 		Devices: func() {
 			report(a.trayDevices(ctx, b, logf, func(text string) {
@@ -114,7 +140,7 @@ func (a *app) cmdTray(args []string) error {
 				}
 			}))
 		},
-		OpenLog: func() { report(wingui.OpenFile(filepath.Join(a.home, trayLogName))) },
+		OpenLog: func() { report(wingui.LogWindow(ctx, filepath.Join(a.home, trayLogName))) },
 		Quit:    cancel,
 	}
 	t, err := wingui.RunTray(ctx, h)
@@ -196,23 +222,44 @@ func (a *app) trayDevices(ctx context.Context, b *broker.Broker, logf io.Writer,
 		}
 		return done(msg, err)
 	}
-	u, err := pairURL(a.home)
+	pairCode, nonce, u, err := b.OpenPair(ctx)
 	if err != nil {
 		return err
 	}
-	pair, err := wingui.Pair(ctx, u, "Quét mã QR bằng Camera của iPhone, hoặc mở liên kết bằng Safari:\r\n\r\n"+u+"\r\n\r\n"+
+	// The dialog only waits. A poller fetches the phone's registration and then cancels dctx, which
+	// closes the dialog; Hủy closes it first and cancels the poller. 10 minutes = the relay slot TTL.
+	dctx, dcancel := context.WithTimeout(ctx, channel.PairTTL)
+	defer dcancel()
+	type waited struct {
+		code   string
+		origin relay.Origin
+		err    error
+	}
+	ch := make(chan waited, 1)
+	go func() {
+		c, o, err := b.WaitPair(dctx, pairCode)
+		ch <- waited{c, o, err}
+		dcancel()
+	}()
+	dlgErr := wingui.Pair(dctx, u, "Quét mã QR bằng Camera của iPhone, hoặc mở liên kết bằng Safari:\r\n\r\n"+u+"\r\n\r\n"+
 		"1. Trong Safari: Chia sẻ → Thêm vào Màn hình chính.\r\n"+
 		"2. Mở KeyGate từ màn hình chính, dán liên kết, bấm Bắt đầu.\r\n"+
-		"3. Gõ mã ghép điện thoại hiện vào ô bên dưới, bấm Tiếp, so 6 từ, rồi nhập mật khẩu chủ và khóa giấy.")
-	if err != nil || pair == "" {
-		return err
+		"3. Hộp thoại này tự đóng khi điện thoại gửi xong; sau đó so 6 từ, nhập mật khẩu chủ và khóa giấy.\r\n\r\n"+
+		"Mã ghép hết hạn sau 10 phút.")
+	dcancel()
+	w := <-ch
+	if errors.Is(dlgErr, wingui.ErrCanceled) {
+		return nil
 	}
-	code, origin, err := b.FetchPairCode(ctx, pair)
-	if err != nil {
-		return fmt.Errorf("lấy mã đăng ký theo mã ghép %s: %w", pair, err)
+	if w.err != nil {
+		if errors.Is(w.err, context.DeadlineExceeded) {
+			w.err = errors.New("mã ghép hết hạn sau 10 phút")
+		}
+		return fmt.Errorf("chờ điện thoại ghép: %w", w.err)
 	}
-	// The relay consumed the pairing code: from here on, any failure or cancel must tell the user
-	// to restart pairing on the phone (it keeps waiting on the old code otherwise).
+	code, origin := w.code, w.origin
+	// The phone's slot is consumed: from here on, any failure or cancel must tell the user to
+	// restart pairing on the phone (it keeps waiting on the old link otherwise).
 	var body members.AddBody
 	err = func() error {
 		if body, err = store.DecodeRequest(code); err != nil {
@@ -226,7 +273,7 @@ func (a *app) trayDevices(ctx context.Context, b *broker.Broker, logf io.Writer,
 			from = "không rõ"
 		}
 		if err := wingui.ConfirmDevice(ctx, fmt.Sprintf("Thiết bị mới: %s (%s)\r\nGửi mã từ: %s", body.Label, body.Dev, from),
-			"Vai trò: duyệt (không nhận khóa vault; chỉ duyệt yêu cầu và gửi lệnh).", store.RequestWords(code)); err != nil {
+			"Vai trò: duyệt (không nhận khóa vault; chỉ duyệt yêu cầu và gửi lệnh).", store.PairWords(code, nonce)); err != nil {
 			return err
 		}
 		_, err := b.AddDeviceFromUI(ctx, code, origin, wingui.OwnerKeys)
@@ -238,10 +285,60 @@ func (a *app) trayDevices(ctx context.Context, b *broker.Broker, logf io.Writer,
 		if errors.Is(err, wingui.ErrCanceled) {
 			why = "đã hủy"
 		}
-		msg := "Chưa thêm thiết bị (" + why + "). Mã ghép đã dùng: trên điện thoại bấm \"Hủy và ghép lại\" để lấy mã mới."
+		msg := "Chưa thêm thiết bị (" + why + "). Mã ghép đã dùng: trên laptop mở lại \"Ghép điện thoại…\", trên điện thoại bấm \"Hủy và ghép lại\" rồi dùng liên kết mới."
 		fmt.Fprintf(logf, "[tray] %s\n", msg)
 		balloon(msg)
 		return nil
 	}
 	return done(fmt.Sprintf("Đã thêm %s (%s), vai trò %s.", body.Label, body.Dev, store.RoleText(body.Role)), err)
+}
+
+// traySecrets is the "Secret…" menu: the window lists metadata only; Xem giá trị and Xóa go
+// through the broker's reveal/delete paths (Windows Hello every time), then the window reopens
+// with the result on its status line.
+func traySecrets(ctx context.Context, b *broker.Broker, logf io.Writer, addSecret func() (string, error)) error {
+	var status, tone, sel string
+	for {
+		rows, err := b.SecretsForUI(ctx)
+		if err != nil {
+			return err
+		}
+		act, err := wingui.Secrets(ctx, rows, status, tone, sel)
+		if errors.Is(err, wingui.ErrCanceled) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		status, tone, sel = "", "muted", ""
+		var aerr error
+		switch act.Action {
+		case "add":
+			var name string
+			name, aerr = addSecret()
+			if aerr == nil {
+				status, tone, sel = "Đã lưu secret "+approve.Sanitize(name, 200)+".", "add", name
+			}
+		case "reveal":
+			sel = act.Names[0]
+			if aerr = b.RevealFromUI(ctx, sel); aerr == nil {
+				status, tone = "Đã hiện giá trị của "+approve.Sanitize(sel, 200)+" (cửa sổ giá trị tự đóng sau 60 giây).", "add"
+			}
+		case "delete":
+			var done []string
+			done, aerr = b.DeleteFromUI(ctx, act.Names)
+			if len(done) > 0 {
+				list := approve.Sanitize(strings.Join(done, ", "), 2000)
+				fmt.Fprintf(logf, "[tray] Đã xóa %d secret: %s\n", len(done), list)
+				status, tone = fmt.Sprintf("Đã xóa %d secret: %s.", len(done), list), "add"
+			}
+		}
+		switch {
+		case errors.Is(aerr, wingui.ErrCanceled):
+			status, tone = "Đã hủy, không thay đổi gì.", "muted"
+		case aerr != nil:
+			fmt.Fprintf(logf, "[tray] %s: %v\n", act.Action, aerr)
+			status, tone = "Không thực hiện được: "+aerr.Error(), "del"
+		}
+	}
 }

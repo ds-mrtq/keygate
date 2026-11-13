@@ -267,3 +267,124 @@ func TestHashPinnedScript(t *testing.T) {
 	es2 := mkEntries(t, map[string]string{"tool": py}, "\""+filepath.ToSlash(py)+"\" "+ph+" x")
 	_ = es2
 }
+
+func TestPyLauncherIsInterpreter(t *testing.T) {
+	d := t.TempDir()
+	py := fakeProg(t, d, "py")
+	script := filepath.Join(d, "ok.py")
+	os.WriteFile(script, []byte("x"), 0o644)
+	if _, err := ParseEntry("py"); err == nil {
+		t.Fatal("py without argument patterns must be rejected")
+	}
+	for _, l := range []string{"npx", "npm", "uv", "dotnet"} {
+		if _, err := ParseEntry(l); err == nil {
+			t.Errorf("%q without patterns must be rejected", l)
+		}
+	}
+	es := mkEntries(t, map[string]string{"py": py}, "py path:"+filepath.ToSlash(d)+"/*.py")
+	if _, err := Check(es, []string{"py", script}, d); err != nil {
+		t.Fatalf("py script: %v", err)
+	}
+	for _, a := range [][]string{{"py", "-c", "print(1)"}, {"py", "-3", script}, {"py", "-m", "http.server"}} {
+		if _, err := Check(es, a, d); !errors.Is(err, ErrBlocked) {
+			t.Errorf("%v must be blocked: %v", a, err)
+		}
+	}
+}
+
+func TestArgvHoldsCanonicalPaths(t *testing.T) {
+	d := t.TempDir()
+	py := fakeProg(t, d, "python")
+	real1 := filepath.Join(d, "real1.py")
+	real2 := filepath.Join(d, "real2.py")
+	os.WriteFile(real1, []byte("print(1)"), 0o644)
+	os.WriteFile(real2, []byte("print(2)"), 0o644)
+	link := filepath.Join(d, "link.py")
+	if err := os.Symlink(real1, link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	es := mkEntries(t, map[string]string{"python": py}, "python path:"+filepath.ToSlash(d)+"/*.py")
+	m, err := Check(es, []string{"python", link}, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Argv[1] != canon(real1) {
+		t.Fatalf("argv must hold the canonical target, got %q want %q", m.Argv[1], canon(real1))
+	}
+	// swap the link after Check: what runs (argv) does not change
+	os.Remove(link)
+	if err := os.Symlink(real2, link); err != nil {
+		t.Fatal(err)
+	}
+	if m.Argv[1] != canon(real1) {
+		t.Fatalf("argv changed after swap: %v", m.Argv)
+	}
+	// relative arguments become absolute too
+	m, err = Check(es, []string{"python", "real2.py"}, d)
+	if err != nil || m.Argv[1] != canon(real2) {
+		t.Fatalf("relative: %v %v", m.Argv, err)
+	}
+	// "@path:" keeps the prefix and a canonical path
+	sql := fakeProg(t, d, "sql")
+	es2 := mkEntries(t, map[string]string{"sql": sql}, "sql /@X @path:"+filepath.ToSlash(d)+"/*.sql")
+	os.WriteFile(filepath.Join(d, "a.sql"), []byte("x"), 0o644)
+	m, err = Check(es2, []string{"sql", "/@X", "@a.sql", "extra"}, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Argv[len(m.Argv)-2]; got != "@"+canon(filepath.Join(d, "a.sql")) {
+		t.Fatalf("@path argv %q", got)
+	}
+}
+
+func TestLockPinsRefusesChangedContent(t *testing.T) {
+	d := t.TempDir()
+	py := fakeProg(t, d, "python")
+	script := filepath.Join(d, "job.py")
+	os.WriteFile(script, []byte("print(1)"), 0o644)
+	h, _ := FileHash(script)
+	es := mkEntries(t, map[string]string{"python": py}, "python path:"+filepath.ToSlash(script)+" "+h)
+	m, err := Check(es, []string{"python", script}, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Pins) != 1 || m.Pins[0].Path != canon(script) {
+		t.Fatalf("pins %+v", m.Pins)
+	}
+	lk, err := m.LockPins()
+	if err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	lk.Close()
+	// content changed between Check and exec
+	os.WriteFile(script, []byte("print(2)"), 0o644)
+	if lk, err := m.LockPins(); !errors.Is(err, ErrBlocked) || !strings.Contains(err.Error(), "sha256:") {
+		if lk != nil {
+			lk.Close()
+		}
+		t.Fatalf("changed content must refuse the run: %v", err)
+	}
+	// file replaced by a missing path
+	os.Remove(script)
+	if lk, err := m.LockPins(); !errors.Is(err, ErrBlocked) {
+		if lk != nil {
+			lk.Close()
+		}
+		t.Fatalf("missing pinned file: %v", err)
+	}
+}
+
+func TestCanonDir(t *testing.T) {
+	d := t.TempDir()
+	link := filepath.Join(t.TempDir(), "l")
+	if err := os.Symlink(d, link); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	if CanonDir(link) != canon(d) {
+		t.Fatalf("%q vs %q", CanonDir(link), canon(d))
+	}
+	wd, _ := os.Getwd()
+	if CanonDir("") != canon(wd) {
+		t.Fatalf("empty dir = %q want %q", CanonDir(""), canon(wd))
+	}
+}

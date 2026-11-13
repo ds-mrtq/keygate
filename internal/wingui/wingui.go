@@ -8,6 +8,8 @@ import (
 	"errors"
 	"io"
 	"strings"
+
+	"keygate/internal/approve"
 )
 
 // ErrCanceled is returned when the user closes a dialog with Cancel.
@@ -51,6 +53,14 @@ func (p *Prompter) Review(ctx context.Context, title, text string) error {
 		return err
 	}
 	return Review(ctx, title, text)
+}
+
+// ReviewDoc shows the structured review (who asks, badges, table of changes) with Continue/Cancel.
+func (p *Prompter) ReviewDoc(ctx context.Context, title string, doc approve.ReviewDoc) error {
+	if err := p.check(); err != nil {
+		return err
+	}
+	return ReviewDoc(ctx, title, doc)
 }
 
 // ShowSecret shows a revealed value in a dialog that closes itself after 60 seconds.

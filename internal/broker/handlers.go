@@ -112,7 +112,7 @@ func (b *Broker) dispatch(ctx context.Context, req wire.Request, w *respWriter, 
 		if err := decode(req.Args, &a); err != nil {
 			return err
 		}
-		z, err := b.authorize(ctx, s, a.Secret, authReq{argv: a.Argv, agent: a.Agent}, peer)
+		z, err := b.authorize(ctx, s, a.Secret, authReq{argv: a.Argv, dir: a.Dir, agent: a.Agent}, peer)
 		if err != nil {
 			return err
 		}
@@ -330,6 +330,7 @@ type authz struct {
 	pv      *policyView
 	match   *allowlist.Match
 	kind    string // effective kind: env|file|oracle-wallet
+	dir     string // canonical run directory (bound into the grant)
 	granted api.GrantInfo
 }
 
@@ -379,6 +380,17 @@ func effectiveKind(g *policy.Grant, itemKind, as string, resolve bool) (string, 
 	return "", fail(wire.CodeBlocked, "policy không cho --as %s với secret này (allow_as)", as)
 }
 
+// approvalCommand is the text a human approves: the argv plus the canonical run directory. The
+// directory part is reserved its own room so a long argv cannot push it out of the capped prompt.
+func approvalCommand(argv []string, dir string) string {
+	d := "  (thư mục: " + approve.Sanitize(dir, 110) + ")"
+	a := approve.FormatArgv(argv)
+	if limit := approve.MaxPrompt - len([]rune(d)); len([]rune(a)) > limit {
+		a = string([]rune(a)[:limit-1]) + "…"
+	}
+	return a + d
+}
+
 // authorizeCheck applies policy, allowlist and kind rules for one secret WITHOUT prompting.
 // pending is true when a (new) grant still needs approval.
 func (b *Broker) authorizeCheck(s *session, name string, rq authReq, peer string) (z *authz, pending bool, err error) {
@@ -404,7 +416,8 @@ func (b *Broker) authorizeCheck(s *session, name string, rq authReq, peer string
 	if err != nil {
 		return deny("policy", info.Env, err)
 	}
-	match, err := allowlist.Check(pv.res[g.Pattern], rq.argv, rq.dir)
+	dir := allowlist.CanonDir(rq.dir)
+	match, err := allowlist.Check(pv.res[g.Pattern], rq.argv, dir)
 	if err != nil {
 		return deny("allowlist", info.Env, err)
 	}
@@ -412,12 +425,12 @@ func (b *Broker) authorizeCheck(s *session, name string, rq authReq, peer string
 	if err != nil {
 		return deny("kind", info.Env, err)
 	}
-	key := grantKey{name, match.Entry.Raw, match.Path}
+	key := grantKey{name, match.Entry.Raw, match.Path, dir}
 	now := b.cfg.Now()
 	b.mu.Lock()
 	cur, ok := b.grants[key]
 	b.mu.Unlock()
-	z = &authz{info: info, g: g, pv: pv, match: match, kind: kind}
+	z = &authz{info: info, g: g, pv: pv, match: match, kind: kind, dir: dir}
 	// A durable grant only counts while the policy still asks for the approval mode it was given under.
 	if ok && cur.live(now) && (!cur.Durable || cur.Approval == g.Approval) {
 		z.granted = cur.GrantInfo
@@ -430,7 +443,7 @@ func (b *Broker) authorizeCheck(s *session, name string, rq authReq, peer string
 // by says who approved ("hello", "paste:<dev>", "remote:<dev>"); a session or `approval: none` grant
 // is volatile, anything else follows an explicit human approval and is remembered on disk.
 func (b *Broker) grantNow(s *session, z *authz, rq authReq, peer, sessID, by string) error {
-	key := grantKey{z.info.Name, z.match.Entry.Raw, z.match.Path}
+	key := grantKey{z.info.Name, z.match.Entry.Raw, z.match.Path, z.dir}
 	appr, sid := z.g.Approval, ""
 	if sessID != "" && appr != policy.ApprovalNone {
 		appr, sid = "session", sessID
@@ -441,7 +454,7 @@ func (b *Broker) grantNow(s *session, z *authz, rq authReq, peer, sessID, by str
 		by = "none"
 	}
 	ge := grantEntry{GrantInfo: api.GrantInfo{Secret: z.info.Name, Pattern: z.match.Entry.Raw, Approval: appr},
-		Path: z.match.Path, By: by, At: now, Durable: sessID == "" && z.g.Approval != policy.ApprovalNone}
+		Path: z.match.Path, Dir: z.dir, By: by, At: now, Durable: sessID == "" && z.g.Approval != policy.ApprovalNone}
 	if z.g.TTL > 0 {
 		ge.Expires = now.Add(z.g.TTL)
 	}
@@ -450,7 +463,7 @@ func (b *Broker) grantNow(s *session, z *authz, rq authReq, peer, sessID, by str
 	if sid == "" && apprName(by) != policy.ApprovalUserPresence {
 		auditAppr = by // remote:<dev> / paste:<dev>
 	}
-	if err := b.aud(s, audit.Entry{Event: audit.EvGrant, Secret: z.info.Name, Env: z.info.Env, Argv: rq.argv, Agent: rq.agent, Approval: auditAppr, Session: sid}, peer); err != nil {
+	if err := b.aud(s, audit.Entry{Event: audit.EvGrant, Secret: z.info.Name, Env: z.info.Env, Argv: rq.argv, Dir: z.dir, Agent: rq.agent, Approval: auditAppr, Session: sid}, peer); err != nil {
 		return fmt.Errorf("không ghi được audit, không cấp grant: %w", err)
 	}
 	b.mu.Lock()
@@ -517,7 +530,7 @@ func (b *Broker) authorizeMany(ctx context.Context, s *session, names []string, 
 			secretList = append(secretList, names[i])
 		}
 		z0 := zs[idx[0]]
-		cmd := approve.FormatArgv(append([]string{z0.match.Path}, rq.argv[1:]...))
+		cmd := approvalCommand(append([]string{z0.match.Path}, rq.argv[1:]...), z0.dir)
 		prod := false
 		for _, i := range idx {
 			prod = prod || policy.IsProd(names[i], zs[i].info.Env)
@@ -632,7 +645,7 @@ func (b *Broker) cmdRun(ctx context.Context, s *session, req api.RunRequest, isR
 	// Audit "run-start" BEFORE anything executes; a failed append means no run.
 	argvA := redactArgv(req.Argv, red)
 	for _, z := range zs {
-		e := audit.Entry{Event: audit.EvRunStart, Secret: z.info.Name, Env: z.info.Env, Argv: argvA, Agent: req.Agent, Approval: z.granted.Approval}
+		e := audit.Entry{Event: audit.EvRunStart, Secret: z.info.Name, Env: z.info.Env, Argv: argvA, Dir: z.dir, Agent: req.Agent, Approval: z.granted.Approval}
 		if err := b.aud(s, e, peer); err != nil {
 			return fmt.Errorf("không ghi được audit bắt đầu, không chạy lệnh: %w", err)
 		}
@@ -652,12 +665,21 @@ func (b *Broker) cmdRun(ctx context.Context, s *session, req api.RunRequest, isR
 			return err
 		}
 	}
+	// Hash-pinned files are re-verified from a locked handle that is held until the child exits.
+	lock, err := zs[0].match.LockPins()
+	if err != nil {
+		for _, z := range zs {
+			b.audBest(s, audit.Entry{Event: audit.EvDeny, Secret: z.info.Name, Env: z.info.Env, Argv: argvA, Dir: zs[0].dir, Agent: req.Agent, Peer: peer, Approval: "pin-lock"})
+		}
+		return err
+	}
+	defer lock.Close()
 	// One ordered redaction stream for stdout+stderr: a value split across the two cannot slip through.
 	so := red.NewWriter(streamWriter{w, "stdout"})
-	code, runErr := env.Run(ctx, execwrap.RunOpts{Argv: zs[0].match.Argv, Dir: req.Dir, Stdout: so, Stderr: so, MaxRuntime: maxRun})
+	code, runErr := env.Run(ctx, execwrap.RunOpts{Argv: zs[0].match.Argv, Dir: zs[0].dir, Stdout: so, Stderr: so, MaxRuntime: maxRun})
 	so.Flush()
 	for _, z := range zs {
-		e := audit.Entry{Event: audit.EvRun, Secret: z.info.Name, Env: z.info.Env, Argv: argvA, Agent: req.Agent, Approval: z.granted.Approval}
+		e := audit.Entry{Event: audit.EvRun, Secret: z.info.Name, Env: z.info.Env, Argv: argvA, Dir: z.dir, Agent: req.Agent, Approval: z.granted.Approval}
 		c := code
 		e.Exit = &c
 		b.aud(s, e, peer)
@@ -670,6 +692,15 @@ func (b *Broker) cmdRun(ctx context.Context, s *session, req api.RunRequest, isR
 }
 
 func (b *Broker) cmdReveal(ctx context.Context, s *session, name string, w *respWriter, peer string) error {
+	if err := b.reveal(ctx, s, name, peer); err != nil {
+		return err
+	}
+	w.ok(nil)
+	return nil
+}
+
+// reveal shows one value on the broker's own dialog after a user-presence approval.
+func (b *Broker) reveal(ctx context.Context, s *session, name, peer string) error {
 	b.mu.Lock()
 	blocked := b.cfg.Now().Before(b.revealBlock)
 	b.mu.Unlock()
@@ -703,7 +734,6 @@ func (b *Broker) cmdReveal(ctx context.Context, s *session, name string, w *resp
 	if err := b.cfg.Prompt.ShowSecret(ctx, approve.Sanitize(name, approve.MaxPrompt), p.Value); err != nil {
 		return fail(wire.CodeDenied, "không hiển thị được giá trị: %v", err)
 	}
-	w.ok(nil)
 	return nil
 }
 
@@ -973,26 +1003,9 @@ func (b *Broker) cmdPolicyApply(ctx context.Context, s *session, w *respWriter, 
 		}
 	}
 	h := policy.Hash(data)
-	diff := policy.Diff(base, p)
-	warns := policy.Warnings(p)
-	var detail strings.Builder
-	if base == nil {
-		detail.WriteString("(không có bản đã ghim đáng tin để so, liệt kê toàn bộ)\n")
-	}
-	if len(diff) == 0 {
-		detail.WriteString("không có thay đổi grant/oracle\n")
-	}
-	for _, d := range diff {
-		detail.WriteString(approve.Sanitize(d, 2000) + "\n")
-	}
-	if len(warns) > 0 {
-		detail.WriteString("\n")
-		for _, wn := range warns {
-			detail.WriteString(approve.Sanitize(wn, 1000) + "\n")
-		}
-	}
-	cmd := fmt.Sprintf("ÁP DỤNG policy.yaml v%d: %d thay đổi, %d cảnh báo (xem diff kèm theo)", oldVer+1, len(diff), len(warns))
-	res, err := b.humanApprove(ctx, s, approvalReq{op: "policy", command: cmd, detail: detail.String(), bind: h, peer: peer, mode: policy.ApprovalUserPresence})
+	detail, doc, nChange, nWarn := policyReview(polPath, base, p, oldVer)
+	cmd := fmt.Sprintf("áp dụng policy.yaml v%d: %d thay đổi, %d cảnh báo", oldVer+1, nChange, nWarn)
+	res, err := b.humanApprove(ctx, s, approvalReq{op: "policy", command: cmd, detail: detail, doc: doc, bind: h, peer: peer, mode: policy.ApprovalUserPresence})
 	if err != nil {
 		if !isPending(err) {
 			b.audBest(s, audit.Entry{Event: audit.EvDeny, Approval: "policy-refused", Peer: peer})
@@ -1028,8 +1041,19 @@ func (b *Broker) cmdPolicyApply(ctx context.Context, s *session, w *respWriter, 
 // cmdDelete tombstones every named secret after ONE user-presence approval. Unknown names fail
 // before anything is written.
 func (b *Broker) cmdDelete(ctx context.Context, s *session, names []string, w *respWriter, peer string) error {
+	done, err := b.deleteSecrets(ctx, s, names, peer, false)
+	if err != nil {
+		return err
+	}
+	w.ok(wire.DeleteResult{Names: done})
+	return nil
+}
+
+// deleteSecrets tombstones the named secrets after one user-presence approval; localOnly keeps the
+// approval at this machine (no phone, so no decision kept for a later identical request).
+func (b *Broker) deleteSecrets(ctx context.Context, s *session, names []string, peer string, localOnly bool) ([]string, error) {
 	if len(names) == 0 {
-		return fail(wire.CodeBadRequest, "thiếu tên secret")
+		return nil, fail(wire.CodeBadRequest, "thiếu tên secret")
 	}
 	seen := map[string]bool{}
 	var infos []store.ItemInfo
@@ -1045,7 +1069,7 @@ func (b *Broker) cmdDelete(ctx context.Context, s *session, names []string, w *r
 			if len(q) > 120 {
 				q = q[:120] + `…"`
 			}
-			return fmt.Errorf("%s: %w", q, err)
+			return nil, fmt.Errorf("%s: %w", q, err)
 		}
 		infos = append(infos, it)
 	}
@@ -1058,25 +1082,24 @@ func (b *Broker) cmdDelete(ctx context.Context, s *session, names []string, w *r
 	for _, it := range infos {
 		prod = prod || policy.IsProd(it.Name, it.Env)
 	}
-	res, err := b.humanApprove(ctx, s, approvalReq{op: "delete", command: cmd, peer: peer, prod: prod, mode: policy.ApprovalUserPresence})
+	res, err := b.humanApprove(ctx, s, approvalReq{op: "delete", command: cmd, peer: peer, prod: prod, mode: policy.ApprovalUserPresence, localOnly: localOnly})
 	if err != nil {
 		if !isPending(err) {
 			b.audBest(s, audit.Entry{Event: audit.EvDeny, Approval: "delete-refused", Peer: peer})
 		}
-		return refused(err, "xóa")
+		return nil, refused(err, "xóa")
 	}
 	var done []string
 	for _, it := range infos {
 		if _, err := s.st.Delete(it.Item); err != nil {
-			return fmt.Errorf("đã xóa %v, lỗi ở %q: %w", done, it.Name, err)
+			return done, fmt.Errorf("đã xóa %v, lỗi ở %q: %w", done, it.Name, err)
 		}
 		done = append(done, it.Name)
 		if err := b.aud(s, audit.Entry{Event: audit.EvDelete, Secret: it.Name, Env: it.Env, Approval: apprName(res.by)}, peer); err != nil {
 			b.logf("ghi audit lỗi: %v", err)
 		}
 	}
-	w.ok(wire.DeleteResult{Names: done})
-	return nil
+	return done, nil
 }
 
 // compareDotenv reports same|diff|missing per key, extra vault names under the prefix, and unparsed

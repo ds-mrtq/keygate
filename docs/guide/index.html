@@ -282,8 +282,8 @@ grants:
 <ol>
   <li>Khay KeyGate → <b>Thiết bị…</b> → <b>Ghép điện thoại…</b>: hiện QR và liên kết ghép nối.</li>
   <li>Trên iPhone, mở liên kết bằng Safari → <b>Chia sẻ</b> → <b>Thêm vào Màn hình chính</b>. Mở KeyGate từ màn hình chính (không dùng tab Safari).</li>
-  <li>Dán liên kết ghép nối vào app. App hiện <b>Mã ghép</b> 8 ký tự và <b>6 từ xác nhận</b>.</li>
-  <li>Trên laptop nhập mã ghép → <b>Tiếp</b> → so 6 từ trên hai màn hình. Khác một từ thì dừng. Giống hết thì <b>Đúng, thêm thiết bị</b>.</li>
+  <li>Dán liên kết ghép nối vào app, bấm <b>Bắt đầu</b>. App hiện <b>6 từ xác nhận</b>; laptop tự nhận mã từ điện thoại (hộp QR tự đóng).</li>
+  <li>Trên laptop so 6 từ trên hai màn hình. Khác một từ thì dừng. Giống hết thì <b>Đúng, thêm thiết bị</b>.</li>
   <li>Nhập mật khẩu chủ + khóa giấy. Xong, <code>kg status</code> báo <code>Điện thoại duyệt: 1 thiết bị</code>.</li>
 </ol>
 <p>Kiểm tra thông báo đẩy và khóa của app: mở <code>&lt;relay&gt;/app/diag.html</code> trên điện thoại.</p>
@@ -315,7 +315,7 @@ grants:
 <table>
   <tr><th>Việc</th><th>Lệnh</th><th>Ghi chú</th></tr>
   <tr><td>Xem danh sách</td><td><code>kg list</code></td><td>Tên, env, kind, lần chạy gần nhất, cờ xung đột. Không có giá trị.</td></tr>
-  <tr><td>Thêm một secret</td><td><code>kg set abc/api-token --kind env --env dev --env-name API_TOKEN</code></td><td>Broker hỏi giá trị trong hộp thoại ẩn. Hoặc khay → Thêm secret.</td></tr>
+  <tr><td>Thêm một secret</td><td><code>kg set abc/api-token --kind env --env dev --env-name API_TOKEN</code></td><td>Broker hỏi giá trị trong hộp thoại ẩn. Hoặc khay → Thêm secret, hoặc app iPhone: tab Secret → <b>+ Thêm</b> (tên đã có thì laptop từ chối).</td></tr>
   <tr><td>Secret wallet Oracle</td><td><code>kg set ebs/test/apps --kind oracle-wallet --env test --tns-alias ebs_test --user APPS</code></td><td>Giá trị là mật khẩu DB.</td></tr>
   <tr><td>Nhập từ <code>.env</code></td><td><code>kg import --dotenv f.env --prefix abc/ --env dev</code></td><td>Broker tự đọc file sau khi duyệt. <code>--rewrite</code> để broker ghi lại file.</td></tr>
   <tr><td>So <code>.env</code> với vault</td><td><code>kg import --dotenv f.env --prefix abc/ --compare</code></td><td>In <code>same</code>/<code>diff</code>/<code>missing</code>/<code>extra</code>, không ghi gì.</td></tr>

@@ -261,12 +261,16 @@ func (e *Env) Environ(base []string) []string {
 	out := make([]string, 0, len(base)+len(e.vars))
 	for _, b := range base {
 		k, _, _ := strings.Cut(b, "=")
-		if nk := normKey(k); !over[nk] && nk != normKey("BASH_ENV") && nk != normKey("ENV") {
+		if nk := normKey(k); !over[nk] && nk != normKey("BASH_ENV") && nk != normKey("ENV") && nk != normKey(noCwdSearch) {
 			out = append(out, b)
 		}
 	}
-	return append(out, e.vars...)
+	out = append(out, e.vars...)
+	// Windows CreateProcess in the child must not search its current directory first (A2).
+	return append(out, noCwdSearch+"=1")
 }
+
+const noCwdSearch = "NoDefaultCurrentDirectoryInExePath"
 
 func normKey(k string) string {
 	if runtime.GOOS == "windows" {

@@ -344,26 +344,45 @@ type Origin struct {
 	UA      string `json:"ua,omitempty"`
 }
 
-// GetPair fetches (and consumes) the registration code a phone published under code, with the
-// origin of the phone's publish request (zero when the relay did not record one).
-func (c *Client) GetPair(ctx context.Context, code string) ([]byte, Origin, error) {
-	var o Origin
+// ErrPairGone means the pairing slot does not exist (expired, already read, or never opened by us).
+var ErrPairGone = errors.New("relay: khe ghép không có hoặc đã hết hạn")
+
+// OpenPair opens a pairing slot under code (16 chars A-Z2-7) for 10 minutes. One slot per device:
+// a second call replaces the first.
+func (c *Client) OpenPair(ctx context.Context, code string) error {
+	data, status, err := c.do(ctx, http.MethodPut, fmt.Sprintf("/v/%s/pair-open/%s", c.vault, code), []byte{})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusCreated {
+		return statusErr("open pair", status, data)
+	}
+	return nil
+}
+
+// GetPair polls the slot we opened. ready=false: the phone has not filled it yet. ready=true: data
+// is the registration code, with the origin of the phone's request (zero when the relay recorded
+// none); the slot is consumed. ErrPairGone: no such slot (expired or consumed).
+func (c *Client) GetPair(ctx context.Context, code string) (data []byte, o Origin, ready bool, err error) {
 	data, status, rh, err := c.doR(ctx, http.MethodGet, fmt.Sprintf("/v/%s/pair/%s", c.vault, code), nil, nil)
 	if err != nil {
-		return nil, o, err
+		return nil, o, false, err
 	}
-	if status == http.StatusNotFound {
-		return nil, o, errors.New("relay: mã ghép không có hoặc đã hết hạn")
-	}
-	if status != http.StatusOK {
-		return nil, o, statusErr("get pair", status, data)
+	switch status {
+	case http.StatusNoContent:
+		return nil, o, false, nil
+	case http.StatusNotFound:
+		return nil, o, false, ErrPairGone
+	case http.StatusOK:
+	default:
+		return nil, o, false, statusErr("get pair", status, data)
 	}
 	if h := rh.Get("KG-Pair-Origin"); h != "" {
 		if raw, err := base64.StdEncoding.DecodeString(h); err == nil && len(raw) <= 1024 {
 			_ = json.Unmarshal(raw, &o)
 		}
 	}
-	return data, o, nil
+	return data, o, true, nil
 }
 
 // Seen is the last authenticated request of a device: unix ms and its origin.

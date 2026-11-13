@@ -88,6 +88,8 @@ type ApproverVec struct {
 	AddBodyJSON string `json:"add_body_json"`
 	Code        string `json:"code"`        // registration code (base32 std, no padding)
 	Words       string `json:"words"`       // 6 confirmation words of Code
+	PairNonce   string `json:"pair_nonce"`  // nonce from the pairing link (base64url, 16 bytes)
+	PairWords   string `json:"pair_words"`  // store.PairWords(Code, PairNonce)
 	GenesisPin  string `json:"genesis_pin"` // store.GenesisPinOf(vault, members[0].hash)
 }
 
@@ -210,6 +212,8 @@ func gen(t *testing.T) *Vectors {
 	v.Approver.Dev, v.Approver.EdSeed, v.Approver.XPriv = apDev, h(apSeed), h(apX)
 	v.Approver.EdPub, v.Approver.XPub = h(apPriv.Public().(ed25519.PublicKey)), h(apxPub[:])
 	v.Approver.AddBodyJSON, v.Approver.Code, v.Approver.Words = string(apJSON), code, store.Words(codeSum[:])
+	v.Approver.PairNonce = "AAECAwQFBgcICQoLDA0ODw"
+	v.Approver.PairWords = store.PairWords(code, v.Approver.PairNonce)
 	v.Approver.GenesisPin = store.GenesisPinOf(vault, v.Members[0].Hash)
 	ra, err := members.New(vault, uint64(len(v.Members)), prev, members.TypeRevokeApprover,
 		members.RevokeApproverBody{Dev: apDev, By: dev, Reason: "lost"}, devPriv)

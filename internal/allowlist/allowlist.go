@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 )
 
@@ -42,12 +43,14 @@ func isPinnable(base string) bool {
 var interpreters = map[string]bool{
 	"node": true, "nodejs": true, "perl": true, "ruby": true, "php": true, "lua": true, "deno": true,
 	"bun": true, "wscript": true, "cscript": true, "osascript": true, "pypy": true, "pypy3": true,
+	"py": true, "pyw": true,
 }
 
 // Programs that run scripts/commands of their own: an entry must carry argument patterns.
 var scriptHosts = map[string]bool{
 	"sql": true, "sqlplus": true, "sqlcl": true, "java": true, "javaw": true, "make": true,
 	"git": true, "ssh": true, "scp": true, "sftp": true, "find": true, "go": true,
+	"npx": true, "npm": true, "uv": true, "dotnet": true,
 }
 
 var pyVersioned = regexp.MustCompile(`^(python|pypy)[0-9.]*(w)?$`)
@@ -137,7 +140,9 @@ func FileHash(path string) (string, error) {
 }
 
 // verifyPins checks the content hashes pinned by the entry against the files about to run.
-func verifyPins(e Resolved, args []string, dir string) error {
+// args are the canonical arguments (see canonArgs); the returned list is what LockPins re-checks.
+func verifyPins(e Resolved, args []string) ([]PinFile, error) {
+	var files []PinFile
 	chk := func(what, path, want string) error {
 		got, err := FileHash(path)
 		if err != nil {
@@ -146,26 +151,29 @@ func verifyPins(e Resolved, args []string, dir string) error {
 		if got != want {
 			return fmt.Errorf("%w: nội dung %s đã đổi so với hash ghim trong policy (hash hiện tại %s, policy ghi %s)", ErrBlocked, what, got, want)
 		}
+		files = append(files, PinFile{Path: path, Hash: want, What: what})
 		return nil
 	}
 	if e.ProgPin != "" {
 		if err := chk("chương trình "+filepath.Base(e.Path), e.Path, e.ProgPin); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	for i, want := range e.Pins {
+	idx := make([]int, 0, len(e.Pins))
+	for i := range e.Pins {
+		idx = append(idx, i)
+	}
+	sort.Ints(idx)
+	for _, i := range idx {
 		if i >= len(args) {
-			return ErrNotAllowed
+			return nil, ErrNotAllowed
 		}
 		a := strings.TrimPrefix(args[i], "@")
-		if !filepath.IsAbs(a) {
-			a = filepath.Join(dir, a)
-		}
-		if err := chk("script "+filepath.Base(a), a, want); err != nil {
-			return err
+		if err := chk("script "+filepath.Base(a), a, e.Pins[i]); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return files, nil
 }
 
 // ParseEntry parses and validates an allow_commands item.
@@ -317,8 +325,9 @@ func Resolve(entries []Entry) []Resolved {
 // Match is the outcome of Check: what to execute.
 type Match struct {
 	Entry Entry
-	Path  string   // absolute program to execute
-	Argv  []string // argv to execute: Path, injected options, then the request arguments
+	Path  string    // absolute program to execute
+	Argv  []string  // argv to execute: Path, injected options, then the request arguments (path: args canonical)
+	Pins  []PinFile // hash-pinned files; call LockPins right before running
 }
 
 func samePath(a, b string) bool {
@@ -431,10 +440,12 @@ func checkEntry(e Resolved, argv []string, dir string) (*Match, error) {
 			return nil, ErrNotAllowed
 		}
 	}
-	if err := verifyPins(e, args, dir); err != nil {
+	cargs := canonArgs(pats, args, dir)
+	pins, err := verifyPins(e, cargs)
+	if err != nil {
 		return nil, err
 	}
-	m := &Match{Entry: e.Entry, Path: e.Path}
+	m := &Match{Entry: e.Entry, Path: e.Path, Pins: pins}
 	m.Argv = append(m.Argv, e.Path)
 	lb := strings.ToLower(base)
 	if lb == "sql" || lb == "sqlcl" || lb == "sqlplus" {
@@ -449,7 +460,7 @@ func checkEntry(e Resolved, argv []string, dir string) (*Match, error) {
 		}
 		m.Argv = append(m.Argv, "-R", lvl)
 	}
-	m.Argv = append(m.Argv, args...)
+	m.Argv = append(m.Argv, cargs...)
 	return m, nil
 }
 
@@ -487,7 +498,10 @@ func checkShell(e Resolved, argv []string, dir string) (*Match, error) {
 	if err != nil || !st.Mode().IsRegular() {
 		return nil, fmt.Errorf("%w: script ghim phải là file thường (không phải symlink/thư mục)", ErrBlocked)
 	}
-	if err := verifyPins(e, args, dir); err != nil {
+	cargs := canonArgs(e.Args, args, dir)
+	cargs[0] = pinnedC
+	pins, err := verifyPins(e, cargs)
+	if err != nil {
 		return nil, err
 	}
 	rest := args[1:]
@@ -499,7 +513,7 @@ func checkShell(e Resolved, argv []string, dir string) (*Match, error) {
 	if e.Exact && len(rest) != len(e.Args)-1 {
 		return nil, ErrNotAllowed
 	}
-	m := &Match{Entry: e.Entry, Path: e.Path, Argv: []string{e.Path}}
+	m := &Match{Entry: e.Entry, Path: e.Path, Argv: []string{e.Path}, Pins: pins}
 	switch {
 	case psShells[base]:
 		m.Argv = append(m.Argv, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", pinnedC)
@@ -508,7 +522,7 @@ func checkShell(e Resolved, argv []string, dir string) (*Match, error) {
 	default:
 		m.Argv = append(m.Argv, pinnedC)
 	}
-	m.Argv = append(m.Argv, rest...)
+	m.Argv = append(m.Argv, cargs[1:]...)
 	return m, nil
 }
 

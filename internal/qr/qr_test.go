@@ -3,6 +3,7 @@ package qr
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -24,5 +25,21 @@ func TestEncodeVersionBoundaries(t *testing.T) {
 	}
 	if _, err := Encode(make([]byte, 214)); !errors.Is(err, ErrTooLong) {
 		t.Fatalf("214 bytes: err %v, want ErrTooLong", err)
+	}
+}
+
+func TestText(t *testing.T) {
+	c, err := Encode([]byte("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimRight(c.Text(), "\n"), "\n")
+	if want := (c.Size + 4 + 1) / 2; len(lines) != want {
+		t.Fatalf("%d lines, want %d", len(lines), want)
+	}
+	for _, l := range lines {
+		if n := len([]rune(l)); n != c.Size+4 {
+			t.Fatalf("line width %d, want %d", n, c.Size+4)
+		}
 	}
 }

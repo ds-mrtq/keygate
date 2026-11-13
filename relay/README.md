@@ -46,6 +46,7 @@ GET trả: `{"logs":{"dev":[{"seq":1,"line":"…"}]},"more":false}`, `{"members"
 
 ### Xác thực và kiểm tra ở relay (chỉ để chặn rác; máy nhận vẫn tự kiểm tất cả)
 
+- Route ghép điện thoại (schema v4): `PUT pair-open/{code16}` (ký, thiết bị đầy đủ, mở khe 10 phút, mỗi thiết bị một khe), `PUT pair/{code16}` (không ký, chỉ điền khe đã mở, 404 nếu không có khe, 409 nếu đã điền), `GET pair/{code16}` (ký, chỉ thiết bị đã mở: 204 chưa điền, 200 rồi xóa khe). Chi tiết ở DESIGN §8.
 - Worker (không trạng thái) từ chối trước khi chạm DO: vault ngoài allowlist (403), route lạ (404), PUT thiếu `Content-Length` (411) hoặc > 64 KiB (413), header/chữ ký sai định dạng hoặc lệch giờ (401).
 - Mỗi sự kiện thành viên được kiểm: chữ ký owner trên canonical đúng DESIGN 4.2 (`"kg/v1/member\x00"+u64(v)+lp(vault)+u64(n)+lp(prev)+lp(type)+lp(body)`) và `prev` = `sha256:`+hex(sha256(canonical||sig)) của sự kiện n-1. Sai -> 400. Trạng thái xác thực (thiết bị, thu hồi) chỉ suy ra từ sự kiện đã kiểm; `revoke` chỉ cần `dev` trong body.
 - Genesis (`PUT members/0` khi vault rỗng): request ký bằng `owner_pub` trong chính genesis (`KG-Device: owner`), sự kiện tự ký bằng `owner_pub`. Các bảng chỉ được tạo sau khi genesis được chấp nhận.

@@ -24,9 +24,10 @@ const maxDetail = 32768
 type approvalReq struct {
 	op        string // grant|unlock|session|set-file|import|compare|delete|policy|resolve-conflict, plus the local-only reveal|overwrite|same|copy
 	secrets   []string
-	command   string // what will happen; never contains the peer (it is shown separately)
-	detail    string // long text (diff, warnings) the approver must be able to read in full
-	bind      string // "sha256:<hex>" of the data that will be applied, or ""
+	command   string             // what will happen; never contains the peer (it is shown separately)
+	detail    string             // long text (diff, warnings) the approver must be able to read in full
+	doc       *approve.ReviewDoc // optional table form of detail for the local dialog
+	bind      string             // "sha256:<hex>" of the data that will be applied, or ""
 	agent     string
 	peer      string
 	prod      bool
@@ -58,7 +59,7 @@ type pendingReq struct {
 	err       error
 }
 
-var errNoChannel = errors.New("không có kênh duyệt: màn hình đang khóa và chưa ghép điện thoại (kg device pair-url)")
+var errNoChannel = errors.New("không có kênh duyệt: màn hình đang khóa và chưa ghép điện thoại (kg device pair)")
 
 // newPendingErr is the client-facing error of a request that is still open on the phone.
 func newPendingErr(rid string) error {
@@ -141,6 +142,44 @@ func (rq approvalReq) prompt() string {
 	return "KeyGate: " + cmd
 }
 
+// reviewText is the long text of the local Review dialog: who asks, then the detail.
+func (rq approvalReq) reviewText() string {
+	who, chain := rq.requester()
+	s := "Ai yêu cầu: " + who
+	if chain != "" {
+		s += ", chạy từ " + chain
+	}
+	return s + "\n" + rq.detail
+}
+
+// requester names the process that asked (and the agent it claims to be) and its ancestors.
+func (rq approvalReq) requester() (who, chain string) {
+	who = "(không rõ tiến trình)"
+	if rq.peer != "" {
+		who, chain = peerParts(rq.peer)
+	}
+	if rq.agent != "" {
+		who += ", agent " + rq.agent
+	}
+	return who, chain
+}
+
+// DocReviewer is implemented by prompters that can show a ReviewDoc as a table.
+type DocReviewer interface {
+	ReviewDoc(ctx context.Context, title string, doc approve.ReviewDoc) error
+}
+
+func (b *Broker) review(ctx context.Context, rq approvalReq) error {
+	title := "KeyGate: " + rq.command
+	if dr, ok := b.cfg.Prompt.(DocReviewer); ok && rq.doc != nil {
+		doc := *rq.doc
+		doc.Requester, doc.Chain = rq.requester()
+		doc.Text = rq.reviewText()
+		return dr.ReviewDoc(ctx, title, doc)
+	}
+	return b.cfg.Prompt.Review(ctx, title, rq.reviewText())
+}
+
 // humanApprove asks a human and reports who approved. The local prompt (Hello, or the pasted device
 // signature for `approval: device` without a phone) and the phone race each other; a locked screen
 // goes to the phone at once, otherwise the phone is offered the request after Config.RemoteDelay.
@@ -183,7 +222,7 @@ func (b *Broker) approveLocal(ctx context.Context, s *session, rq approvalReq) (
 			b.cfg.OnPrompt(prompt)
 		}
 		if rq.detail != "" {
-			if err := b.cfg.Prompt.Review(ctx, "KeyGate: "+rq.command, rq.detail); err != nil {
+			if err := b.review(ctx, rq); err != nil {
 				return approvalRes{}, err
 			}
 		}

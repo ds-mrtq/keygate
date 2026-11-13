@@ -362,9 +362,10 @@ export function registrationCode(add) {
   return base32(enc.encode(j + "}"));
 }
 
-/** 6 confirmation words: first 6 bytes of sha256(code) index the word list. */
-export async function codeWords(code) {
-  const sum = await sha256(enc.encode(code));
+/** Phone pairing words: sha256("kg/v1/pair-words\0" + lp(nonce) + lp(code)) indexes the word list (Go store.PairWords). */
+export async function pairWords(code, nonce) {
+  const norm = code.split(/\s+/).join("").toUpperCase();
+  const sum = await sha256(concat(enc.encode("kg/v1/pair-words\0"), lp(enc.encode(nonce)), lp(enc.encode(norm))));
   return Array.from(sum.subarray(0, 6), (x) => WORDS[x]).join(" ");
 }
 

@@ -487,7 +487,7 @@ func TestPolicyApplyDiffFlushAndVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := f.prompt.String()
-	for _, want := range []string{"+ grant *", "approval: none", "glob"} {
+	for _, want := range []string{"+ THÊM quyền dùng secret *", "approval none", "glob", "Ai yêu cầu: "} {
 		if !strings.Contains(out, want) {
 			t.Errorf("TTY output lacks %q:\n%s", want, out)
 		}

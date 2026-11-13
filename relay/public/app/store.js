@@ -1,5 +1,5 @@
 // IndexedDB 'keygate' / object store 'kv'. Private keys are non-extractable CryptoKeys (structured-cloned as-is).
-// Keys: vault, pin, dev, label, edKey, xWrapKey+xSealed (or xRaw; legacy xKey), edPub, xPub, phase ("pairing" | "paired"), code, pairCode, words, sel.
+// Keys: vault, pin, dev, label, edKey, xWrapKey+xSealed (or xRaw; legacy xKey), edPub, xPub, phase ("pairing" | "paired"), code, words, sel.
 
 const DB_NAME = "keygate";
 const STORE = "kv";

@@ -101,7 +101,8 @@ type session struct {
 	led *audit.Ledger
 }
 
-type grantKey struct{ secret, pattern, path string }
+// grantKey identifies a grant: secret, policy entry, resolved program and canonical run directory.
+type grantKey struct{ secret, pattern, path, dir string }
 
 // Broker is the running service.
 type Broker struct {

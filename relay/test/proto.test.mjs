@@ -137,8 +137,9 @@ await check("registrationCode equals approver.code", async () => {
   assert.equal(P.registrationCode(JSON.parse(ap.add_body_json)), ap.code);
 });
 
-await check("codeWords equals approver.words", async () => {
-  assert.equal(await P.codeWords(ap.code), ap.words);
+await check("pairWords equals approver.pair_words (Go store.PairWords)", async () => {
+  assert.equal(await P.pairWords(ap.code, ap.pair_nonce), ap.pair_words);
+  assert.notEqual(ap.pair_words, ap.words);
 });
 
 await check("pendingDigest equals pending_digest.digest", async () => {

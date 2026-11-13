@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"time"
 
 	"keygate/internal/api"
@@ -134,7 +135,8 @@ func (c *Client) List(ctx context.Context) ([]api.SecretInfo, error) {
 // RequestGrant implements api.Broker.
 func (c *Client) RequestGrant(ctx context.Context, secret string, argv []string, agent string) (api.GrantInfo, error) {
 	var g api.GrantInfo
-	return g, c.do(ctx, wire.CmdGrant, wire.GrantArgs{Secret: secret, Argv: argv, Agent: agent}, &g)
+	dir, _ := os.Getwd() // a grant is bound to the directory the command will run in (like `kg run`)
+	return g, c.do(ctx, wire.CmdGrant, wire.GrantArgs{Secret: secret, Argv: argv, Agent: agent, Dir: dir}, &g)
 }
 
 // Run implements api.Broker; a Resolve request goes through CmdResolve.

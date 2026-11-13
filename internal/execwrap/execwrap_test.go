@@ -60,7 +60,7 @@ func TestEnvAndFile(t *testing.T) {
 		{Name: "named", Value: "nv", Kind: "env", EnvName: "MY_NAMED"},
 	}
 	t.Setenv("KG_TEST_HELPER", "1")
-	t.Setenv("KG_TEST_PRINT", "KG_HT_TEST_TOKEN,KG_FILE_CFG,MY_NAMED")
+	t.Setenv("KG_TEST_PRINT", "KG_EBS_TEST_TOKEN,KG_FILE_CFG,MY_NAMED")
 	var out bytes.Buffer
 	env, err := NewEnv(context.Background(), Config{}, secrets, "")
 	if err != nil {
@@ -83,7 +83,7 @@ func TestEnvAndFile(t *testing.T) {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
 	got := out.String()
-	for _, w := range []string{"KG_HT_TEST_TOKEN=tok-123456", "KG_FILE_CFG=line1\nline2", "MY_NAMED=nv"} {
+	for _, w := range []string{"KG_EBS_TEST_TOKEN=tok-123456", "KG_FILE_CFG=line1\nline2", "MY_NAMED=nv"} {
 		if !strings.Contains(got, w) {
 			t.Errorf("missing %q in %q", w, got)
 		}
@@ -257,5 +257,25 @@ func TestMaxRuntimeKillsTree(t *testing.T) {
 	b, _ := os.ReadFile(beat)
 	if string(a) != string(b) {
 		t.Fatalf("grandchild still running (beat %s -> %s)", a, b)
+	}
+}
+
+func TestChildEnvNoCwdSearch(t *testing.T) {
+	env, err := NewEnv(context.Background(), Config{}, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer env.Cleanup()
+	got := ""
+	for _, kv := range env.Environ([]string{"NoDefaultCurrentDirectoryInExePath=0", "A=b"}) {
+		if strings.HasPrefix(strings.ToUpper(kv), "NODEFAULTCURRENTDIRECTORYINEXEPATH=") {
+			if got != "" {
+				t.Fatalf("duplicate variable: %q and %q", got, kv)
+			}
+			got = kv
+		}
+	}
+	if got != "NoDefaultCurrentDirectoryInExePath=1" {
+		t.Fatalf("child env: %q", got)
 	}
 }

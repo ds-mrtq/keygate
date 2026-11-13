@@ -33,7 +33,7 @@ func setRelayURL(t *testing.T, home, url string) {
 	}
 }
 
-func TestDevicePairURLAndAddPair(t *testing.T) {
+func TestDevicePair(t *testing.T) {
 	t.Setenv("KG_DEVKEY_BACKEND", "plain")
 	root := t.TempDir()
 	home := filepath.Join(root, "h1")
@@ -43,81 +43,100 @@ func TestDevicePairURLAndAddPair(t *testing.T) {
 	out := ta.do(t, "init", "--label", "laptop", "--dir", filepath.Join(root, "shared"))
 	paper := regexp.MustCompile(`(?m)^\s+([A-Z2-7]{4}(?:-[A-Z2-7]{4})+)\s*$`).FindStringSubmatch(out)[1]
 
-	// no relay configured: both subcommands explain how to attach one
-	if code := ta.run([]string{"device", "pair-url"}); code == 0 || !strings.Contains(ta.errb.String(), "vault chưa gắn relay") {
-		t.Fatalf("pair-url without relay: code=%d err=%s", code, ta.errb.String())
+	// the old subcommands are gone
+	if code := ta.run([]string{"device", "pair-url"}); code == 0 {
+		t.Fatal("pair-url must no longer exist")
 	}
-	if code := ta.run([]string{"device", "add", "--pair", "ABCD2345"}); code == 0 || !strings.Contains(ta.errb.String(), "vault chưa gắn relay") {
-		t.Fatalf("add --pair without relay: code=%d err=%s", code, ta.errb.String())
+	if code := ta.run([]string{"device", "add", "--pair", "ABCD2345"}); code == 0 {
+		t.Fatal("add --pair must no longer exist")
+	}
+	// no relay configured: pair explains how to attach one
+	if code := ta.run([]string{"device", "pair"}); code == 0 || !strings.Contains(ta.errb.String(), "vault chưa gắn relay") {
+		t.Fatalf("pair without relay: code=%d err=%s", code, ta.errb.String())
 	}
 
 	phone := store.NewIdentity("iphone")
 	body := phone.Public()
 	body.Role = members.RoleApprover
 	regCode := store.RequestCode(body)
+	full := store.NewIdentity("macbook")
+	fullCode := store.RequestCode(full.Public())
 
 	cfg, err := store.ReadConfig(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	laptop, err := func() (string, error) {
-		raw, err := os.ReadFile(filepath.Join(home, "device.json"))
-		if err != nil {
-			return "", err
-		}
-		var d struct {
-			Dev string `json:"dev"`
-		}
-		err = json.Unmarshal(raw, &d)
-		return d.Dev, err
-	}()
-	if err != nil || laptop == "" {
-		t.Fatalf("device.json: %q %v", laptop, err)
+	raw, err := os.ReadFile(filepath.Join(home, "device.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	var d struct {
+		Dev string `json:"dev"`
+	}
+	if err := json.Unmarshal(raw, &d); err != nil || d.Dev == "" {
+		t.Fatalf("device.json: %q %v", d.Dev, err)
+	}
+	laptop := d.Dev
 
 	var mu sync.Mutex
-	var pairGets int
+	var opened, gets int
+	var slot, filled string // code of the open slot, registration code the "phone" publishes
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
-		if r.Method == http.MethodGet && r.URL.Path == "/v/"+cfg.Vault+"/pair/ABCD2345" {
-			pairGets++
-			if r.Header.Get("KG-Device") != laptop || r.Header.Get("KG-Sig") == "" {
-				t.Errorf("pair request not signed by the laptop identity: %v", r.Header)
-			}
-			_, _ = w.Write([]byte(regCode))
-			return
+		if r.Header.Get("KG-Device") != laptop || r.Header.Get("KG-Sig") == "" {
+			t.Errorf("relay request not signed by the laptop identity: %v", r.Header)
 		}
-		t.Errorf("unexpected relay request %s %s", r.Method, r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
+		prefix := "/v/" + cfg.Vault
+		switch {
+		case r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, prefix+"/pair-open/"):
+			opened++
+			slot = strings.TrimPrefix(r.URL.Path, prefix+"/pair-open/")
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodGet && slot != "" && r.URL.Path == prefix+"/pair/"+slot:
+			gets++
+			_, _ = w.Write([]byte(filled))
+		default:
+			t.Errorf("unexpected relay request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer srv.Close()
 	setRelayURL(t, home, srv.URL+"/")
-
-	// pair-url
-	out = ta.do(t, "device", "pair-url")
 	pin, err := genesisPin(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := srv.URL + "/app/#v=" + cfg.Vault + "&p=" + pin + "\n"; out != want {
-		t.Fatalf("pair-url:\n got %q\nwant %q", out, want)
+
+	// a full-device code is refused (nothing is added, no prompt is reached)
+	filled = fullCode
+	if code := ta.run([]string{"device", "pair"}); code == 0 || !strings.Contains(ta.errb.String(), "thiết bị đầy đủ") {
+		t.Fatalf("pair with a full-device code: code=%d err=%s", code, ta.errb.String())
+	}
+	if !strings.Contains(ta.errb.String(), "kg device add") {
+		t.Fatalf("refusal must point to kg device add: %s", ta.errb.String())
 	}
 
-	// positional code and --pair are mutually exclusive
-	if code := ta.run([]string{"device", "add", "--pair", "ABCD2345", regCode}); code == 0 {
-		t.Fatal("--pair with a positional code must fail")
-	}
-
-	// add --pair: fetch, show 6 words + approver notice, confirm, add (no epoch event)
+	// approver code: link with nonce, 6 words bound to it, typed yes, add (no epoch event)
+	filled = regCode
 	ta.secrets = []string{master, paper}
 	ta.lines = []string{"yes"}
-	out = ta.do(t, "device", "add", "--pair", "abcd 2345")
-	if !strings.Contains(out, "THIẾT BỊ DUYỆT") || !strings.Contains(out, store.RequestWords(regCode)) {
-		t.Fatalf("add --pair output:\n%s", out)
+	out = ta.do(t, "device", "pair")
+	m := regexp.MustCompile(`(?m)^(` + regexp.QuoteMeta(srv.URL) + `/app/#v=` + cfg.Vault + `&p=` + regexp.QuoteMeta(pin) + `&c=([A-Z2-7]{16})&n=([A-Za-z0-9_-]{22}))$`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("pair link missing or malformed:\n%s", out)
 	}
-	if pairGets != 1 {
-		t.Fatalf("pair fetched %d times", pairGets)
+	if m[2] != slot {
+		t.Fatalf("link code %q != opened slot %q", m[2], slot)
+	}
+	if !strings.Contains(out, "THIẾT BỊ DUYỆT") || !strings.Contains(out, store.PairWords(regCode, m[3])) {
+		t.Fatalf("pair output:\n%s", out)
+	}
+	if strings.Contains(out, store.RequestWords(regCode)) {
+		t.Fatalf("words must be bound to the nonce, not RequestWords:\n%s", out)
+	}
+	if opened != 2 || gets != 2 {
+		t.Fatalf("opened=%d gets=%d", opened, gets)
 	}
 	list := ta.do(t, "device", "list")
 	if !strings.Contains(list, phone.Dev) || !strings.Contains(list, "duyệt") {
