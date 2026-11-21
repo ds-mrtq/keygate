@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -28,7 +29,7 @@ type Change struct {
 	Delivery string   // new values (old ones for del)
 	Approval string
 	TTL      string
-	Fields   []FieldChange // mod/oracle: settings that changed, besides allow_commands
+	Fields   []FieldChange // mod/oracle: settings that changed, besides allow_commands; add: optional settings (New only)
 }
 
 // Warning is one risky setting of the new policy.
@@ -103,11 +104,21 @@ func grantFields(g Grant) []field {
 	return fs
 }
 
-func grantKey(g Grant) string { return fmt.Sprint(grantFields(g), g.AllowCommands) }
+// sameGrant compares element by element: a rendered string would hide list boundaries
+// (["a b"] and ["a", "b"] print alike) and let a change skip review.
+func sameGrant(a, b Grant) bool {
+	return slices.Equal(grantFields(a), grantFields(b)) && slices.Equal(a.AllowCommands, b.AllowCommands)
+}
 
 func newChange(op string, g Grant) Change {
-	return Change{Op: op, Secret: g.Pattern, Prod: IsProd(g.Pattern, ""), Commands: g.AllowCommands,
+	c := Change{Op: op, Secret: g.Pattern, Prod: IsProd(g.Pattern, ""), Commands: g.AllowCommands,
 		Delivery: deliveryText(g), Approval: ApprovalText(g.Approval), TTL: ttlText(g)}
+	if op == ChangeAdd {
+		for _, f := range grantFields(g)[3:] { // max_runtime, allow_as: the three above have their own fields
+			c.Fields = append(c.Fields, FieldChange{Label: f.label, New: f.value})
+		}
+	}
+	return c
 }
 
 // Changes lists the differences from old (may be nil: everything is new) to cur.
@@ -127,7 +138,7 @@ func Changes(old, cur *Policy) []Change {
 			out = append(out, newChange(ChangeAdd, g))
 			continue
 		}
-		if grantKey(o) == grantKey(g) {
+		if sameGrant(o, g) {
 			continue
 		}
 		c := newChange(ChangeMod, g)
@@ -145,6 +156,9 @@ func Changes(old, cur *Policy) []Change {
 			if !curCmd[x] {
 				c.Removed = append(c.Removed, x)
 			}
+		}
+		if len(c.Added) == 0 && len(c.Removed) == 0 && !slices.Equal(o.AllowCommands, g.AllowCommands) {
+			c.Fields = append(c.Fields, FieldChange{"allow_commands", "thứ tự/số lần cũ", "đổi thứ tự hoặc lặp lại mục"})
 		}
 		om := map[string]string{}
 		for _, f := range grantFields(o) {
@@ -205,6 +219,9 @@ func (c Change) Text() string {
 			b.WriteString("\n      • " + x)
 		}
 		fmt.Fprintf(&b, "\n    cấp dạng: %s\n    duyệt: %s\n    hết hạn: %s", c.Delivery, c.Approval, c.TTL)
+		for _, f := range c.Fields {
+			fmt.Fprintf(&b, "\n    %s: %s", f.Label, f.New)
+		}
 	case ChangeMod:
 		b.WriteString("~ SỬA quyền dùng secret " + c.Secret)
 		for _, x := range c.Added {
@@ -238,10 +255,10 @@ func orNone(s string) string {
 // grant identical to the one in old (the last applied policy, may be nil) was approved before: it is
 // returned in keptProd instead of warns so the new risks stand out.
 func Warnings(old, cur *Policy) (warns []Warning, keptProd []string) {
-	oldKey := map[string]string{}
+	oldG := map[string]Grant{}
 	if old != nil {
 		for _, g := range old.Grants {
-			oldKey[g.Pattern] = grantKey(g)
+			oldG[g.Pattern] = g
 		}
 	}
 	for _, g := range cur.Grants {
@@ -252,7 +269,7 @@ func Warnings(old, cur *Policy) (warns []Warning, keptProd []string) {
 			warns = append(warns, Warning{g.Pattern, "tên có ký tự đại diện (glob): áp cho mọi secret khớp"})
 		}
 		if IsProd(g.Pattern, "") {
-			if k, ok := oldKey[g.Pattern]; ok && k == grantKey(g) {
+			if o, ok := oldG[g.Pattern]; ok && sameGrant(o, g) {
 				keptProd = append(keptProd, g.Pattern)
 			} else {
 				warns = append(warns, Warning{g.Pattern, "secret PROD, grant mới/sửa trong lần này"})
