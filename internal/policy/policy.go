@@ -173,12 +173,16 @@ func Parse(data []byte) (*Policy, error) {
 	return p, nil
 }
 
+// maxDays is the largest "<n>d" that fits time.Duration (int64 nanoseconds): 106751 days.
+const maxDays = int64(^uint64(0)>>1) / int64(24*time.Hour)
+
 // ParseTTL accepts Go durations plus a "d" (days) suffix.
 func ParseTTL(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
 	if strings.HasSuffix(s, "d") {
 		var n int
-		if _, err := fmt.Sscanf(s, "%dd", &n); err != nil || n <= 0 {
+		// past maxDays the product wraps time.Duration (negative = a grant that never expires)
+		if _, err := fmt.Sscanf(s, "%dd", &n); err != nil || n <= 0 || int64(n) > maxDays {
 			return 0, fmt.Errorf("ttl %q không hợp lệ", s)
 		}
 		return time.Duration(n) * 24 * time.Hour, nil
