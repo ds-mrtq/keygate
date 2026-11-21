@@ -1,48 +1,60 @@
 package envname
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Tool hooks: each name makes git, ssh, less, a build tool or a TLS client run a
 // caller-chosen program or trust caller-chosen roots.
+var toolHookNames = []string{
+	"GIT_SSH", "GIT_SSH_COMMAND", "GIT_EXEC_PATH", "GIT_ASKPASS",
+	"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_KEY_12", "GIT_CONFIG_VALUE_0", "GIT_CONFIG_VALUE_12",
+	"GIT_CONFIG_GLOBAL", "GIT_EXTERNAL_DIFF", "SSH_ASKPASS",
+	"LESSOPEN", "LESSCLOSE", "PAGER", "EDITOR",
+	"RUSTC_WRAPPER", "CC", "MAKEFLAGS", "NPM_CONFIG_SCRIPT_SHELL",
+	"GOTOOLCHAIN", "GOENV", "SSL_CERT_FILE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS",
+}
+
+func mixedCase(s string) string {
+	b := []byte(strings.ToLower(s))
+	for i := 0; i < len(b); i += 2 {
+		if b[i] >= 'a' && b[i] <= 'z' {
+			b[i] -= 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
 func TestCheckToolHookVariables(t *testing.T) {
-	tests := []struct {
+	type tc struct {
 		name    string
 		wantErr bool
-	}{
-		{name: "GIT_SSH", wantErr: true},
-		{name: "GIT_SSH_COMMAND", wantErr: true},
-		{name: "GIT_EXEC_PATH", wantErr: true},
-		{name: "GIT_ASKPASS", wantErr: true},
-		{name: "GIT_CONFIG_COUNT", wantErr: true},
-		{name: "GIT_CONFIG_KEY_0", wantErr: true},
-		{name: "GIT_CONFIG_KEY_12", wantErr: true},
-		{name: "GIT_CONFIG_VALUE_0", wantErr: true},
-		{name: "GIT_CONFIG_VALUE_12", wantErr: true},
-		{name: "GIT_CONFIG_GLOBAL", wantErr: true},
-		{name: "GIT_EXTERNAL_DIFF", wantErr: true},
-		{name: "SSH_ASKPASS", wantErr: true},
-		{name: "LESSOPEN", wantErr: true},
-		{name: "LESSCLOSE", wantErr: true},
-		{name: "PAGER", wantErr: true},
-		{name: "EDITOR", wantErr: true},
-		{name: "RUSTC_WRAPPER", wantErr: true},
-		{name: "CC", wantErr: true},
-		{name: "MAKEFLAGS", wantErr: true},
-		{name: "NPM_CONFIG_SCRIPT_SHELL", wantErr: true},
-		{name: "GOTOOLCHAIN", wantErr: true},
-		{name: "GOENV", wantErr: true},
-		{name: "SSL_CERT_FILE", wantErr: true},
-		{name: "CURL_CA_BUNDLE", wantErr: true},
-		{name: "NODE_EXTRA_CA_CERTS", wantErr: true},
-		{name: "git_ssh_command", wantErr: true},
-		{name: "Git_Config_Key_0", wantErr: true},
-		{name: "npm_config_script_shell", wantErr: true},
-		{name: "HTTPS_PROXY"},
-		{name: "https_proxy"},
-		{name: "GIT_TOKEN"},
-		{name: "SSH_KEY_PASSPHRASE"},
-		{name: "CC_API_KEY"},
-		{name: "NPM_TOKEN"},
+	}
+	var tests []tc
+	for _, n := range toolHookNames {
+		tests = append(tests,
+			tc{name: n, wantErr: true},
+			tc{name: strings.ToLower(n), wantErr: true},
+			tc{name: mixedCase(n), wantErr: true},
+			tc{name: " " + n, wantErr: true},
+			tc{name: n + " ", wantErr: true},
+			tc{name: "\t" + n, wantErr: true},
+			tc{name: n + "\t", wantErr: true},
+			tc{name: n + "\n", wantErr: true},
+		)
+		if len(n) > 2 {
+			tests = append(tests, tc{name: n[:2] + " " + n[2:], wantErr: true})
+		}
+	}
+	for _, n := range []string{
+		"HTTPS_PROXY", "https_proxy", "Https_Proxy",
+		"GIT_TOKEN", "SSH_KEY_PASSPHRASE", "CC_API_KEY", "NPM_TOKEN", "MY_PAGER_TOKEN", "EDITOR_KEY",
+	} {
+		tests = append(tests, tc{name: n})
+	}
+	for _, n := range []string{" HTTPS_PROXY", "HTTPS_PROXY ", "\tHTTPS_PROXY", "HTTPS PROXY"} {
+		tests = append(tests, tc{name: n, wantErr: true})
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
