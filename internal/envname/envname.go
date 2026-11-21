@@ -17,9 +17,18 @@ var denyExact = map[string]bool{
 	"PSMODULEPATH": true, "COMSPEC": true, "ENV": true, "IFS": true, "PATHEXT": true,
 	"JAVA_HOME": true, "ORACLE_HOME": true, "NODE_PATH": true, "GOFLAGS": true, "GOROOT": true,
 	"SYSTEMROOT": true, "WINDIR": true, "HOME": true, "USERPROFILE": true, "TEMP": true, "TMP": true,
+	// glibc, interpreters, .NET, shells, plugin loaders: each makes the program load or run caller-chosen code
+	"GCONV_PATH": true, "GLIBC_TUNABLES": true, "PERLLIB": true, "TCLLIBPATH": true,
+	"PHPRC": true, "PHP_INI_SCAN_DIR": true, "R_PROFILE": true, "R_PROFILE_USER": true,
+	"DOTNET_STARTUP_HOOKS": true, "DOTNET_ADDITIONAL_DEPS": true,
+	"COR_ENABLE_PROFILING": true, "CORECLR_ENABLE_PROFILING": true,
+	"SHELLOPTS": true, "BASHOPTS": true, "PS4": true, "ZDOTDIR": true,
+	"OPENSSL_CONF": true, "OPENSSL_ENGINES": true, "GTK_MODULES": true, "GTK_PATH": true,
+	"QT_PLUGIN_PATH": true, "GIO_MODULE_DIR": true,
 }
 
-var denyPrefix = []string{"LD_", "DYLD_", "PYTHON", "PERL5", "RUBY"}
+// LUA_ covers versioned LUA_INIT_5_4/LUA_PATH_5_4; *_PROFILER covers the _32/_64 path variants.
+var denyPrefix = []string{"LD_", "DYLD_", "PYTHON", "PERL5", "RUBY", "LUA_", "COR_PROFILER", "CORECLR_PROFILER"}
 
 // Check returns an error when name is not a safe variable name.
 func Check(name string) error {
