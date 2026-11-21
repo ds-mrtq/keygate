@@ -106,6 +106,8 @@ sequenceDiagram
 
 ## Quick start
 
+For release downloads, verification, and signing, see [Releases](docs/RELEASE.md).
+
 ```bash
 # build
 go build -o kg ./cmd/kg
