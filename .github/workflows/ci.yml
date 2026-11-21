@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: build, vet, test (race)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: go build
+        run: go build ./...
+      - name: go vet
+        run: |
+          go vet ./...
+          go vet -tags kgtest ./...
+      - name: go vet (windows, darwin)
+        run: |
+          for goos in windows darwin; do
+            GOOS=$goos go vet ./...
+            GOOS=$goos go vet -tags kgtest ./...
+          done
+      # kgtest is the test build documented in the README: it enables the fake approver and plain
+      # device-key backend the tests rely on; production builds never set it.
+      - name: go test -race
+        run: go test -race -count=1 -tags kgtest ./...
