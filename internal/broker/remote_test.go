@@ -372,6 +372,7 @@ func TestRemoteDeny(t *testing.T) {
 	if !sawDeny {
 		t.Fatalf("audit lacks the remote deny: %+v", ledger(t, r.fixture))
 	}
+	r.waitView("request closed", func(v remote.View) bool { return len(v.Pending) == 0 })
 	r.noPendingFor(100 * time.Millisecond)
 }
 
