@@ -148,6 +148,9 @@ func changeRow(c policy.Change) approve.ReviewRow {
 	switch c.Op {
 	case policy.ChangeAdd:
 		r.Label, r.What = "Thêm", shortCmds(c.Commands)
+		for _, f := range c.Fields { // max_runtime, allow_as: otherwise only in the detail pane
+			r.What += "; " + f.Label + ": " + f.New
+		}
 	case policy.ChangeDel:
 		r.Label, r.What = "Bỏ", "không lệnh nào được nhận nữa"
 	case policy.ChangeOracle:
@@ -155,14 +158,14 @@ func changeRow(c policy.Change) approve.ReviewRow {
 	default:
 		r.Label = "Sửa"
 		var w []string
+		for _, f := range c.Fields { // settings first: a long command list must not truncate them away
+			w = append(w, f.Label+": "+f.Old+" → "+f.New)
+		}
 		for _, x := range c.Added {
 			w = append(w, "+ "+shortCmd(x))
 		}
 		for _, x := range c.Removed {
 			w = append(w, "− "+shortCmd(x))
-		}
-		for _, f := range c.Fields {
-			w = append(w, f.Label+": "+f.Old+" → "+f.New)
 		}
 		r.What = strings.Join(w, "; ")
 	}
