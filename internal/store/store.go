@@ -415,6 +415,7 @@ func bootstrap(home string, id *Identity, state *members.State, snap transport.S
 		return nil, err
 	}
 	if _, err = st.IngestFrom("", snap); err != nil {
+		st.Close() // st is reset to nil by the return below, so the deferred Close would miss it
 		return nil, err
 	}
 	return st, nil
