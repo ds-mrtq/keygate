@@ -1,0 +1,220 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths: ['.github/workflows/release.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Build raw binaries
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          for os in linux darwin windows; do
+            for arch in amd64 arm64; do
+              dir="raw/$os/$arch"
+              mkdir -p "$dir"
+              if [ "$os" = windows ]; then
+                GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w" -o "$dir/kg.exe" ./cmd/kg
+                GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w -H=windowsgui" -o "$dir/kgw.exe" ./cmd/kg
+              else
+                GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w" -o "$dir/kg" ./cmd/kg
+              fi
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: raw-binaries
+          path: raw/
+          if-no-files-found: error
+
+  sign-macos:
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: raw-binaries
+          path: raw
+      - name: Sign and notarize when Apple credentials are configured
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        env:
+          APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APPLE_CERT_P12_BASE64" ] || [ -z "$APPLE_CERT_PASSWORD" ] ||
+             [ -z "$APPLE_NOTARY_KEY_P8_BASE64" ] || [ -z "$APPLE_NOTARY_KEY_ID" ] ||
+             [ -z "$APPLE_NOTARY_ISSUER_ID" ]; then
+            echo 'Apple signing credentials incomplete; skipping native signing.'
+            exit 0
+          fi
+          signing_dir=$(mktemp -d "$RUNNER_TEMP/apple-signing.XXXXXX")
+          keychain="$signing_dir/signing.keychain-db"
+          cleanup() {
+            security delete-keychain "$keychain" 2>/dev/null || true
+            rm -rf "$signing_dir"
+          }
+          trap cleanup EXIT
+          printf '%s' "$APPLE_CERT_P12_BASE64" | base64 --decode > "$signing_dir/cert.p12"
+          printf '%s' "$APPLE_NOTARY_KEY_P8_BASE64" | base64 --decode > "$signing_dir/key.p8"
+          keychain_password=$(openssl rand -hex 32)
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$signing_dir/cert.p12" -P "$APPLE_CERT_PASSWORD" -k "$keychain" -T /usr/bin/codesign >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+          identity=$(security find-identity -v -p codesigning "$keychain" | awk '/"/ {print $2; exit}')
+          test -n "$identity"
+          for arch in amd64 arm64; do
+            binary="raw/darwin/$arch/kg"
+            chmod +x "$binary"
+            codesign --force --keychain "$keychain" --sign "$identity" --options runtime --timestamp "$binary"
+            codesign --verify --strict "$binary"
+            ditto -c -k "$binary" "$signing_dir/$arch.zip"
+            xcrun notarytool submit "$signing_dir/$arch.zip" --wait \
+              --key "$signing_dir/key.p8" --key-id "$APPLE_NOTARY_KEY_ID" \
+              --issuer "$APPLE_NOTARY_ISSUER_ID" --output-format json > "$signing_dir/result.json"
+            python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print("Notarization: " + r["status"]); sys.exit(0 if r["status"] == "Accepted" else 1)' "$signing_dir/result.json"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin-binaries
+          path: raw/darwin/
+          if-no-files-found: error
+
+  sign-windows:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: raw-binaries
+          path: raw
+      - name: Sign when Windows credentials are configured
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (!$env:WINDOWS_CERT_PFX_BASE64 -or !$env:WINDOWS_CERT_PASSWORD) {
+            Write-Host 'Windows signing credentials incomplete; skipping native signing.'
+            exit 0
+          }
+          $cert = Join-Path $env:RUNNER_TEMP 'release-signing.pfx'
+          try {
+            [IO.File]::WriteAllBytes($cert, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+            $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' |
+              Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+            if (!$signtool) { throw 'Windows SDK signtool.exe not found' }
+            Get-ChildItem raw/windows -Recurse -Filter '*.exe' | ForEach-Object {
+              & $signtool sign /f $cert /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $_.FullName
+              if ($LASTEXITCODE -ne 0) { throw 'Authenticode signing failed' }
+              & $signtool verify /pa $_.FullName
+              if ($LASTEXITCODE -ne 0) { throw 'Authenticode verification failed' }
+            }
+          } finally {
+            Remove-Item $cert -Force -ErrorAction SilentlyContinue
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: raw/windows/
+          if-no-files-found: error
+
+  package:
+    needs: [build, sign-macos, sign-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: raw-binaries
+          path: raw
+      - uses: actions/download-artifact@v4
+        with:
+          name: darwin-binaries
+          path: raw/darwin
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-binaries
+          path: raw/windows
+      - name: Package and checksum
+        env:
+          IS_TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="dev-${GITHUB_SHA:0:7}"
+          if [ "$IS_TAG" = true ]; then version="$TAG"; fi
+          mkdir -p dist
+          for os in linux darwin windows; do
+            for arch in amd64 arm64; do
+              dir="raw/$os/$arch"
+              cp LICENSE README.md "$dir/"
+              name="kg_${version}_${os}_${arch}"
+              if [ "$os" = windows ]; then
+                (cd "$dir" && zip -q "../../../dist/$name.zip" kg.exe kgw.exe LICENSE README.md)
+              else
+                chmod +x "$dir/kg"
+                tar -czf "dist/$name.tar.gz" -C "$dir" kg LICENSE README.md
+              fi
+            done
+          done
+          (cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS && sha256sum -c SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-packages
+          path: dist
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: 'dist/*'
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" dist/* --draft --verify-tag --title "$TAG" --notes 'Release archives and SHA256SUMS have GitHub/Sigstore keyless build provenance.
+
+          Verify each downloaded archive and the checksum manifest:
+          ```sh
+          gh attestation verify <file> --repo ds-mrtq/keygate
+          sha256sum -c SHA256SUMS
+          ```
+          Run attestation verification for SHA256SUMS and each archive you use. Download all archives before checking the full manifest. Native Apple/Windows signing is optional; see docs/RELEASE.md for details.'

@@ -106,6 +106,8 @@ sequenceDiagram
 
 ## Bắt đầu nhanh
 
+Tải bản phát hành, xác minh và ký: [Releases](docs/RELEASE.md) (tiếng Anh).
+
 ```bash
 # build
 go build -o kg ./cmd/kg
