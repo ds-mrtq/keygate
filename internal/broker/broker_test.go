@@ -92,6 +92,7 @@ type fixture struct {
 	keys      *recovery.Keys
 	paper     string // human form of the paper key
 	approvals atomic.Int32
+	prompt1   atomic.Value // last prompt the local approver showed
 	refuse    atomic.Bool
 	locked    atomic.Bool
 	cfg       Config
@@ -146,8 +147,9 @@ func newFixtureWith(t *testing.T, idle, poll time.Duration, mod func(*Config)) *
 	cfg := Config{
 		Home: f.home, IdleLock: idle, ScreenPoll: poll, Prompt: f.prompt, RevealCooldown: 300 * time.Millisecond,
 		LockOnScreenLock: true,
-		Approver: approve.Func(func(context.Context, string) error {
+		Approver: approve.Func(func(_ context.Context, prompt string) error {
 			f.approvals.Add(1)
+			f.prompt1.Store(prompt)
 			if f.refuse.Load() {
 				return errors.New("người dùng từ chối")
 			}
@@ -327,7 +329,7 @@ func TestProdDefaultDeny(t *testing.T) {
 	f.put("", "ht/prod/other", "prod")
 	f.put("", "ht/prod/exact", "prod")
 	f.put("", "ebs/test/x", "prod") // env=prod by tag, name is not prod-looking
-	f.put("", "ebs/prd/y", "dev")  // prd segment, env says dev
+	f.put("", "ebs/prd/y", "dev")   // prd segment, env says dev
 	f.policy(basePolicy, true)
 	ctx := context.Background()
 	prod := []string{"sql", "/@PROD"}
@@ -739,6 +741,26 @@ func TestDeleteBatchAllOrNothing(t *testing.T) {
 		t.Fatalf("fingerprint %q %v", fp, err)
 	}
 	_ = n
+}
+
+// Delete only hides a secret (append-only logs), so its approval must say so, even for a long batch.
+func TestDeleteApprovalWarnsHistoryKept(t *testing.T) {
+	f := newFixture(t, time.Hour, time.Hour)
+	var names []string
+	for i := 0; i < 8; i++ {
+		n := fmt.Sprintf("team/%s/%d", strings.Repeat("long-name-", 4), i)
+		f.put("", n, "dev")
+		names = append(names, n)
+	}
+	for _, batch := range [][]string{names[:1], names[1:]} {
+		if _, err := f.cli.Delete(context.Background(), batch); err != nil {
+			t.Fatal(err)
+		}
+		p, _ := f.prompt1.Load().(string)
+		if !strings.Contains(p, deleteHistoryWarning) || !strings.Contains(p, batch[0]) {
+			t.Fatalf("delete prompt lacks the history warning or the name: %q", p)
+		}
+	}
 }
 
 func TestBatchApprovalAndCompare(t *testing.T) {
