@@ -53,7 +53,7 @@ func ApprovalText(a string) string {
 func deliveryText(g Grant) string {
 	kind := g.Kind
 	if kind == "" {
-		kind = "env"
+		kind = "theo kind của secret" // the broker falls back to the item's kind, not to env
 	}
 	s := kind
 	if g.EnvName != "" {
@@ -104,10 +104,19 @@ func grantFields(g Grant) []field {
 	return fs
 }
 
-// sameGrant compares element by element: a rendered string would hide list boundaries
-// (["a b"] and ["a", "b"] print alike) and let a change skip review.
+// sameGrant compares the parsed settings themselves: rendered text loses list boundaries
+// (["a b"] and ["a", "b"] print alike), kind "" vs env, sub-second durations, and any field a
+// renderer forgets, each of which would let a change skip review.
 func sameGrant(a, b Grant) bool {
-	return slices.Equal(grantFields(a), grantFields(b)) && slices.Equal(a.AllowCommands, b.AllowCommands)
+	return a.Kind == b.Kind && a.EnvName == b.EnvName && a.TNSAlias == b.TNSAlias && a.Approval == b.Approval &&
+		a.TTL == b.TTL && a.MaxRuntime == b.MaxRuntime && slices.Equal(a.AllowAs, b.AllowAs) &&
+		slices.Equal(a.AllowCommands, b.AllowCommands)
+}
+
+// rawSettings shows every setting unrendered, for a change the readable fields cannot express.
+func rawSettings(g Grant) string {
+	return fmt.Sprintf("kind=%q env_name=%q tns_alias=%q approval=%q ttl=%s max_runtime=%s allow_as=%q",
+		g.Kind, g.EnvName, g.TNSAlias, g.Approval, g.TTL, g.MaxRuntime, g.AllowAs)
 }
 
 func newChange(op string, g Grant) Change {
@@ -178,6 +187,9 @@ func Changes(old, cur *Policy) []Change {
 			if _, gone := om[f.label]; gone {
 				c.Fields = append(c.Fields, FieldChange{f.label, f.value, "(bỏ)"})
 			}
+		}
+		if len(c.Added) == 0 && len(c.Removed) == 0 && len(c.Fields) == 0 {
+			c.Fields = append(c.Fields, FieldChange{"thiết lập", rawSettings(o), rawSettings(g)})
 		}
 		out = append(out, c)
 	}

@@ -26,7 +26,7 @@ func TestChangesFirstApproval(t *testing.T) {
     hết hạn: 1 giờ 2 phút 3 giây`,
 		`+ THÊM quyền dùng secret demo/blocked
     lệnh được nhận secret: (không lệnh nào)
-    cấp dạng: env
+    cấp dạng: theo kind của secret
     duyệt: luôn chặn
     hết hạn: không hết hạn`)
 	if !got[0].Prod || got[1].Prod {
@@ -66,7 +66,7 @@ grants:
 		`~ SỬA quyền dùng secret demo/token
     thêm lệnh: curl --fail
     bỏ lệnh: curl --silent
-    cấp dạng: env DEMO_TOKEN → file
+    cấp dạng: theo kind của secret DEMO_TOKEN → file
     duyệt: Hello/điện thoại → chữ ký điện thoại
     hết hạn: không hết hạn → 45 giây
     chạy tối đa: (không đặt) → 3 phút
