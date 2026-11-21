@@ -4,6 +4,7 @@ package execwrap
 
 import (
 	"os/exec"
+	"sync"
 	"unsafe"
 
 	"keygate/internal/pshell"
@@ -12,7 +13,11 @@ import (
 )
 
 // tree kills a whole process tree through a Job Object (KILL_ON_JOB_CLOSE).
-type tree struct{ job windows.Handle }
+// kill may run on exec's context-watch goroutine while attach runs.
+type tree struct {
+	mu  sync.Mutex
+	job windows.Handle
+}
 
 func newTree() *tree { return &tree{} }
 
@@ -43,17 +48,23 @@ func (t *tree) attach(cmd *exec.Cmd) error {
 		windows.CloseHandle(job)
 		return err
 	}
+	t.mu.Lock()
 	t.job = job
+	t.mu.Unlock()
 	return nil
 }
 
 func (t *tree) kill() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.job != 0 {
 		windows.TerminateJobObject(t.job, 1)
 	}
 }
 
 func (t *tree) close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.job != 0 {
 		windows.CloseHandle(t.job) // KILL_ON_JOB_CLOSE reaps whatever is left
 		t.job = 0
