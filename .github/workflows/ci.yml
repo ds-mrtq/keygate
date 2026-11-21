@@ -35,3 +35,40 @@ jobs:
       # device-key backend the tests rely on; production builds never set it.
       - name: go test -race
         run: go test -race -count=1 -tags kgtest ./...
+
+  fuzz:
+    name: fuzz (short)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      # Go runs one fuzz target per invocation; the seed corpora also run in the test job above.
+      # A crasher is written to testdata/fuzz/<Target>/ and uploaded below so it can be committed
+      # as a regression input.
+      - name: go test -fuzz
+        run: |
+          set -euo pipefail
+          while read -r pkg target; do
+            echo "::group::$pkg $target"
+            go test -tags kgtest -run '^$' -fuzz "^${target}\$" -fuzztime 20s "$pkg"
+            echo "::endgroup::"
+          done <<'TARGETS'
+          ./internal/broker/wire FuzzRequestDecode
+          ./internal/broker/wire FuzzFrameStream
+          ./internal/broker/wire FuzzFrameDecode
+          ./internal/broker FuzzReadLine
+          ./internal/redact FuzzWriterMatchesBytes
+          ./internal/redact FuzzNoLeak
+          ./internal/policy FuzzParse
+          ./internal/policy FuzzQuotedScalarRoundTrip
+          TARGETS
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-crashers
+          path: '**/testdata/fuzz/'
+          if-no-files-found: ignore
