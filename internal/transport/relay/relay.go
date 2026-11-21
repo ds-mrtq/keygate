@@ -129,9 +129,12 @@ func (c *Client) send(ctx context.Context, method, pathQuery string, body []byte
 		return nil, 0, nil, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResp))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResp+1))
 	if err != nil {
 		return nil, resp.StatusCode, nil, err
+	}
+	if len(data) > maxResp { // a cut-off body must not pass as a complete response
+		return nil, resp.StatusCode, nil, fmt.Errorf("relay: response over %d bytes", maxResp)
 	}
 	return data, resp.StatusCode, resp.Header, nil
 }
