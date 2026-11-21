@@ -147,7 +147,7 @@ Relay và duyệt bằng điện thoại: xem [`relay/README.md`](relay/README.m
 
 - Giá trị secret chỉ nằm trong RAM của broker và trong môi trường của tiến trình con do broker chạy. Socket giữa CLI và broker chỉ chở tên và argv, không chở giá trị theo cả hai chiều.
 - Relay thấy ID vault, ID thiết bị, kích thước, thời điểm. Relay không đọc được tên hay giá trị secret; sửa dữ liệu trên relay bị phát hiện qua chữ ký, chuỗi `prev`, high-water mark và checkpoint.
-- **Giới hạn đã biết** (chi tiết ở [`docs/DESIGN.md`](docs/DESIGN.md) và [`docs/CLI.md`](docs/CLI.md)): bộ che không bắt dạng hex, UTF-16, chuỗi đảo, nén, hay giá trị dưới 4 ký tự; còn khe TOCTOU giữa lúc băm script đã ghim và lúc chạy; khôi phục cặp `policy.yaml` + pin cũ trước khi broker khởi động không bị phát hiện; tài khoản Cloudflare phục vụ PWA là một phần gốc tin cậy cho quyền duyệt.
+- **Giới hạn đã biết** (chi tiết ở [`docs/DESIGN.md`](docs/DESIGN.md) và [`docs/CLI.md`](docs/CLI.md)): `kg delete` chỉ ẩn secret vì log thiết bị chỉ ghi thêm: thiết bị đã ghép và khóa giấy khôi phục vẫn đọc được giá trị cũ, nên đổi mật khẩu/token thật nếu có thể đã lộ; bộ che không bắt dạng hex, UTF-16, chuỗi đảo, nén, hay giá trị dưới 4 ký tự; còn khe TOCTOU giữa lúc băm script đã ghim và lúc chạy; khôi phục cặp `policy.yaml` + pin cũ trước khi broker khởi động không bị phát hiện; tài khoản Cloudflare phục vụ PWA là một phần gốc tin cậy cho quyền duyệt.
 - Chưa có kiểm toán bảo mật độc lập. Dự án cá nhân, dùng hằng ngày trên Windows 11 + iPhone. Duyệt Touch ID trên macOS chưa kiểm trên máy thật; Linux dùng mật khẩu thiết bị và duyệt `device`.
 
 Phát hiện lỗi bảo mật: mở issue không kèm chi tiết khai thác và đề nghị một kênh riêng.

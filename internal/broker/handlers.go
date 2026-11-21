@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"keygate/internal/allowlist"
 	"keygate/internal/api"
@@ -1051,6 +1052,10 @@ func (b *Broker) cmdDelete(ctx context.Context, s *session, names []string, w *r
 
 // deleteSecrets tombstones the named secrets after one user-presence approval; localOnly keeps the
 // approval at this machine (no phone, so no decision kept for a later identical request).
+// deleteHistoryWarning ends every delete approval: device logs are append-only, so a delete hides the
+// secret but key holders can still decrypt earlier versions (documented limit, see docs/CLI.md).
+const deleteHistoryWarning = "Xóa chỉ ẩn secret: thiết bị đã ghép và khóa giấy khôi phục vẫn đọc được giá trị cũ. Đổi mật khẩu/token thật nếu có thể đã lộ."
+
 func (b *Broker) deleteSecrets(ctx context.Context, s *session, names []string, peer string, localOnly bool) ([]string, error) {
 	if len(names) == 0 {
 		return nil, fail(wire.CodeBadRequest, "thiếu tên secret")
@@ -1077,7 +1082,9 @@ func (b *Broker) deleteSecrets(ctx context.Context, s *session, names []string, 
 	for _, it := range infos {
 		qs = append(qs, strconv.Quote(approve.Sanitize(it.Name, 100)))
 	}
-	cmd := fmt.Sprintf("XÓA %d secret: %s", len(infos), strings.Join(qs, ", "))
+	head := fmt.Sprintf("XÓA %d secret: ", len(infos))
+	listed := approve.Sanitize(strings.Join(qs, ", "), approve.MaxPrompt-1-utf8.RuneCountInString(head+". "+deleteHistoryWarning)) // -1: the ellipsis
+	cmd := head + listed + ". " + deleteHistoryWarning
 	prod := false
 	for _, it := range infos {
 		prod = prod || policy.IsProd(it.Name, it.Env)
