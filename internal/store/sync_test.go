@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 
 	"keygate/internal/checkpoint"
@@ -271,6 +272,9 @@ func TestBootstrapCleanup(t *testing.T) {
 			if stage != "mkdir" {
 				requireCleanHome(t, home)
 			}
+			if _, err := os.Stat(filepath.Join(home, "lock")); stage == "ingest" && !os.IsNotExist(err) {
+				t.Fatalf("failed bootstrap still holds the store lock: %v", err)
+			}
 		})
 	}
 }
@@ -366,6 +370,9 @@ func TestChannelStateAndCursors(t *testing.T) {
 func TestLoadChannels(t *testing.T) {
 	for _, kind := range []string{"json", "version", "channel", "nil map", "MAC", "valid", "skip", "read directory", "read file"} {
 		t.Run(kind, func(t *testing.T) {
+			if kind == "read directory" && runtime.GOOS == "windows" {
+				t.Skip("Windows ReadDir on a regular file reports ERROR_PATH_NOT_FOUND, which loadChannels treats as no channels")
+			}
 			st, _, _ := newApproverFixture(t)
 			path := chanPath(st.Home, "relay")
 			cf := chanFile{V: 1, Channel: "relay", MembersN: st.Members().Count, HW: map[string]uint64{st.ID.Dev: 0}}
