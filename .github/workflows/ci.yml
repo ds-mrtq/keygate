@@ -10,28 +10,46 @@ permissions:
 
 jobs:
   go:
-    name: build, vet, test (race)
-    runs-on: ubuntu-latest
+    name: build, vet, test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           check-latest: true
+      # The default Windows temp dir is an 8.3 short path (C:\Users\RUNNER~1\...), which breaks
+      # the tests that compare resolved allowlist and broker paths; use the runner's long temp dir.
+      - name: long TMP/TEMP (windows)
+        if: runner.os == 'Windows'
+        run: |
+          echo "TMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          echo "TEMP=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: go build
         run: go build ./...
       - name: go vet
         run: |
           go vet ./...
           go vet -tags kgtest ./...
-      - name: go vet (windows, darwin)
+      # macOS is outside the test matrix; it is vetted by cross-compilation only.
+      - name: go vet (darwin)
+        if: runner.os == 'Linux'
         run: |
-          for goos in windows darwin; do
-            GOOS=$goos go vet ./...
-            GOOS=$goos go vet -tags kgtest ./...
-          done
+          GOOS=darwin go vet ./...
+          GOOS=darwin go vet -tags kgtest ./...
       # kgtest is the test build documented in the README: it enables the fake approver and plain
       # device-key backend the tests rely on; production builds never set it.
       - name: go test -race
+        if: runner.os == 'Linux'
         run: go test -race -count=1 -tags kgtest ./...
+      - name: go test
+        if: runner.os == 'Windows'
+        run: go test -count=1 -tags kgtest ./...
