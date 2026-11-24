@@ -119,6 +119,7 @@ kg init --label laptop
 
 # start the broker: tray on Windows, foreground elsewhere
 kgw tray        # or: kg broker
+# Linux: approvals ask for the device password on the broker's own terminal only
 
 # add secrets, write a policy, apply it
 kg set db/test/app --kind oracle-wallet --env test --tns-alias ebs_test --user APP
@@ -148,7 +149,7 @@ Relay and phone approvals: see [`relay/README.md`](relay/README.md) (`npx wrangl
 - Secret values exist only in the broker's RAM and in the environment of the child process it starts. The CLI socket carries names and argv, never values, in either direction.
 - The relay sees vault and device IDs, sizes and timestamps. It cannot read secret names or values, and tampering is detected by signatures, `prev` chains, high-water marks and checkpoints.
 - **Known limits** (details in [`docs/DESIGN.md`](docs/DESIGN.md) and [`docs/CLI.md`](docs/CLI.md)): `kg delete` only hides a secret, because device logs are append-only: paired devices and the paper recovery key can still read the old value, so change the real password or token if it may have leaked; the masker does not catch hex, UTF-16, reversed or compressed forms, or values under 4 characters; there is a TOCTOU window between hashing a pinned script and running it; restoring an older `policy.yaml` + pin pair before the broker starts is not detected; the Cloudflare account that serves the PWA is part of the trust root for approvals.
-- Not independently audited. Personal project, used daily on Windows 11 + iPhone. macOS Touch ID approval is untested on real hardware; Linux uses a device password and `device` approvals.
+- Not independently audited. Personal project, used daily on Windows 11 + iPhone. macOS Touch ID approval is untested on real hardware; on Linux, approvals use the device unlock password, accepted only when typed at an interactive terminal attached to the broker itself (stdin a TTY, or `/dev/tty`). A password piped in, or sent through the socket, an environment variable, a flag or a client command, is refused, and the broker asks for approval from another device instead (`approval: device` is unchanged).
 
 Found a security issue? Please open an issue without exploit details and ask for a private channel.
 

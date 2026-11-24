@@ -67,11 +67,12 @@ type Console struct {
 	out   io.Writer
 	lines chan lineResult
 	mu    sync.Mutex // one prompt at a time
+	ctty  func() (*os.File, error)
 }
 
 // NewConsole starts the reader goroutine on r. in (optional) is the terminal file for hidden input.
 func NewConsole(r io.Reader, in *os.File, out io.Writer) *Console {
-	c := &Console{in: in, out: out, lines: make(chan lineResult, 1)}
+	c := &Console{in: in, out: out, lines: make(chan lineResult, 1), ctty: openControllingTerminal}
 	br := bufio.NewReader(r)
 	go func() {
 		for {
@@ -129,6 +130,46 @@ func (c *Console) ReadLine(ctx context.Context, prompt string) (string, error) {
 // ReadSecret prompts and reads a line without echo (when the input is a terminal).
 func (c *Console) ReadSecret(ctx context.Context, prompt string) (string, error) {
 	return c.read(ctx, prompt, true)
+}
+
+// SetControllingTerminal replaces how ReadTerminalSecret opens the controlling terminal (tests).
+func (c *Console) SetControllingTerminal(open func() (*os.File, error)) { c.ctty = open }
+
+// ReadTerminalSecret reads a hidden line only from an interactive terminal attached to this
+// process: the console input when it is a terminal, else the controlling terminal (/dev/tty).
+// A pipe or file never answers it: with neither terminal it returns ErrNoTerminal.
+func (c *Console) ReadTerminalSecret(ctx context.Context, prompt string) (string, error) {
+	if c.in != nil && isTerminal(c.in) {
+		return c.read(ctx, prompt, true)
+	}
+	f, err := c.ctty()
+	if err != nil {
+		return "", ErrNoTerminal
+	}
+	defer f.Close()
+	if !isTerminal(f) {
+		return "", ErrNoTerminal
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	restore, err := disableEcho(f)
+	if err != nil {
+		return "", err
+	}
+	defer restore()
+	fmt.Fprint(f, prompt)
+	ch := make(chan lineResult, 1)
+	go func() { // ends when f is closed on return
+		s, err := readLine(bufio.NewReader(f))
+		ch <- lineResult{s, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case r := <-ch:
+		fmt.Fprintln(f)
+		return r.s, r.err
+	}
 }
 
 // ShowSecret prints a revealed value on the console (the broker's own terminal).

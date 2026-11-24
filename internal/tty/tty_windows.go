@@ -25,3 +25,5 @@ func disableEcho(f *os.File) (func(), error) {
 	}
 	return func() { windows.SetConsoleMode(h, old) }, nil
 }
+
+func openControllingTerminal() (*os.File, error) { return nil, ErrNoTerminal }

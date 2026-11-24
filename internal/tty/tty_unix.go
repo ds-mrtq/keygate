@@ -27,3 +27,5 @@ func disableEcho(f *os.File) (func(), error) {
 	}
 	return func() { unix.IoctlSetTermios(fd, ioctlWriteTermios, old) }, nil
 }
+
+func openControllingTerminal() (*os.File, error) { return os.OpenFile("/dev/tty", os.O_RDWR, 0) }
