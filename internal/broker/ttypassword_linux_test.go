@@ -247,3 +247,29 @@ func TestDeviceApprovalIgnoresTTYPassword(t *testing.T) {
 		t.Fatalf("approval: device must show the challenge:\n%s", s)
 	}
 }
+
+// With stdin and the log redirected, the password is read from /dev/tty: the operation being
+// approved must be shown there too, not only in the log.
+func TestTTYPasswordControllingTerminalShowsOperation(t *testing.T) {
+	var checks atomic.Int64
+	master, slave := openPTY(t)
+	op := &operator{answers: map[string]func(string) string{"Mật khẩu mở khóa thiết bị để duyệt: ": say(goodPw)}}
+	go op.watch(master)
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { r.Close(); w.Close() })
+	var log syncBuf
+	c := tty.NewConsole(r, r, &log)
+	c.SetControllingTerminal(func() (*os.File, error) { return os.OpenFile(slave.Name(), os.O_RDWR|unix.O_NOCTTY, 0) })
+	f := linuxFixture(t, c, &checks)
+	f.put("", "ebs/test/a", "test")
+	f.policy(basePolicy, true)
+	if _, err := f.cli.RequestGrant(context.Background(), "ebs/test/a", sqlArgv, "t"); err != nil {
+		t.Fatalf("grant with the device password typed at /dev/tty: %v", err)
+	}
+	if s := op.text(); !strings.Contains(s, "[KeyGate: cho phép dùng secret ebs/test/a cho lệnh: ") {
+		t.Fatalf("/dev/tty did not show the operation before the password prompt:\n%s", s)
+	}
+}

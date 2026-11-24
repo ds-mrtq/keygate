@@ -40,9 +40,10 @@ func (b *Broker) approveByTTYPassword(ctx context.Context, prompt string) (res a
 	if !isTP || b.cfg.CheckPassword == nil {
 		return approvalRes{}, false, nil
 	}
-	fmt.Fprintf(b.out(), "\n[%s]\n", prompt)
+	// The operation goes on the same terminal as the password prompt (it may be /dev/tty, not the log).
+	ask := fmt.Sprintf("\n[%s]\nMật khẩu mở khóa thiết bị để duyệt: ", prompt)
 	for i := 1; i <= maxPasswordTries; i++ {
-		pw, err := tp.ReadTerminalSecret(ctx, "Mật khẩu mở khóa thiết bị để duyệt: ")
+		pw, err := tp.ReadTerminalSecret(ctx, ask)
 		if errors.Is(err, tty.ErrNoTerminal) {
 			b.logf("không có terminal tương tác gắn với broker: mật khẩu thiết bị không được dùng để duyệt, cần duyệt từ thiết bị khác")
 			return approvalRes{}, false, nil
