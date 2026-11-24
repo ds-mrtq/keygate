@@ -56,6 +56,10 @@ func newApp() (*app, error) {
 }
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
+		// Needs no KG_HOME, so it works before a home directory exists.
+		os.Exit((&app{out: os.Stdout, errw: os.Stderr}).run(os.Args[1:]))
+	}
 	a, err := newApp()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "kg:", err)
