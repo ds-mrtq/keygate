@@ -58,7 +58,7 @@ func TestStreamingAnyChunking(t *testing.T) {
 
 func TestShortIgnoredAndLongestFirst(t *testing.T) {
 	r := New([]Secret{{"s", "abc"}, {"l", "abcd1234"}, {"m", "abcd"}})
-	if got := r.String("abc abcd1234 abcd"); got != "abc [kg:l] [kg:m] SCRATCH-BROKEN" {
+	if got := r.String("abc abcd1234 abcd"); got != "abc [kg:l] [kg:m]" {
 		t.Fatalf("got %q", got)
 	}
 }
