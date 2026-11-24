@@ -62,6 +62,7 @@ Biến môi trường: `KG_AGENT` (nhãn người gọi tự khai, ghi vào audi
 | `kg approve <challenge>` | Máy khác duyệt giúp broker (approval `device`): hiện nội dung (đã bỏ ký tự điều khiển), đòi duyệt người, in chuỗi chữ ký `kga1.…` để dán vào TTY broker. |
 | `kg audit verify` | Kiểm chuỗi hash, MAC từng dòng và **neo đầu chuỗi** (cắt đuôi/xóa file bị phát hiện). |
 | `kg audit show [--since 7d]` | Kiểm như trên rồi mới liệt kê (sự kiện, secret, env, agent tự khai, peer, mã thoát, argv dạng mảng đã làm sạch). |
+| `kg version` (= `kg --version`) | In phiên bản, commit và OS/kiến trúc, ví dụ `kg v0.1.0 (commit 0123456789ab, linux/amd64)`. Bản phát hành lấy giá trị từ `-ldflags "-X main.version=<tag> -X main.commit=<sha>"` trong `release.yml`; `go build` thường in `dev` (commit lấy từ thông tin VCS Go ghi vào binary, `-dirty` nếu cây làm việc có thay đổi, `unknown` nếu không có). Không đọc `KG_HOME`, không cần broker. |
 | `kg hook check` | Đọc JSON PreToolUse từ stdin. Chặn: in lý do ra stderr, thoát 2; đầu vào hỏng: thoát 2. |
 
 ## Policy (`KG_HOME/policy.yaml`)
