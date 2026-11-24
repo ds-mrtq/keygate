@@ -17,6 +17,11 @@ attestation, or release creation.
 
 Each `kg_<tag>_<os>_<arch>.tar.gz` (Windows: `.zip`) includes `LICENSE`,
 `README.md`, and `kg` (Windows: both `kg.exe` and tray broker `kgw.exe`).
+Every binary is stamped with `-ldflags "-X main.version=<version> -X main.commit=<sha>"`,
+so `kg version` prints the tag (or `dev-<shortsha>` for dry runs). The
+`verify-packages` job unpacks the Linux amd64 archive and the Windows amd64
+zip on matching runners and fails unless `kg version` reports that version and
+commit; a tag release is only created after it passes.
 The committed Windows amd64 `.syso` embeds the icon automatically; the
 amd64-only `tools/gen-winres` generator is not needed for releases. Windows
 arm64 builds without that icon resource.

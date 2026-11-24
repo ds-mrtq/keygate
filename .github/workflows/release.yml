@@ -13,26 +13,40 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           check-latest: true
+      - name: Version
+        id: version
+        env:
+          IS_TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="dev-${GITHUB_SHA:0:7}"
+          if [ "$IS_TAG" = true ]; then version="$TAG"; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Build raw binaries
         env:
           CGO_ENABLED: '0'
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
+          ldflags="-s -w -X main.version=$VERSION -X main.commit=$GITHUB_SHA"
           for os in linux darwin windows; do
             for arch in amd64 arm64; do
               dir="raw/$os/$arch"
               mkdir -p "$dir"
               if [ "$os" = windows ]; then
-                GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w" -o "$dir/kg.exe" ./cmd/kg
-                GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w -H=windowsgui" -o "$dir/kgw.exe" ./cmd/kg
+                GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "$dir/kg.exe" ./cmd/kg
+                GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags -H=windowsgui" -o "$dir/kgw.exe" ./cmd/kg
               else
-                GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "-s -w" -o "$dir/kg" ./cmd/kg
+                GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags "$ldflags" -o "$dir/kg" ./cmd/kg
               fi
             done
           done
@@ -160,12 +174,10 @@ jobs:
           path: raw/windows
       - name: Package and checksum
         env:
-          IS_TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           set -euo pipefail
-          version="dev-${GITHUB_SHA:0:7}"
-          if [ "$IS_TAG" = true ]; then version="$TAG"; fi
+          version="$VERSION"
           mkdir -p dist
           for os in linux darwin windows; do
             for arch in amd64 arm64; do
@@ -187,9 +199,53 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # Unpack the packaged archive on its own OS and check `kg version` reports the package version.
+  verify-packages:
+    needs: [build, package]
+    name: verify packages (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            archive: linux_amd64.tar.gz
+            binary: kg
+          - os: windows-latest
+            archive: windows_amd64.zip
+            binary: kg.exe
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-packages
+          path: dist
+      - name: Check kg version
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          ARCHIVE: kg_${{ needs.build.outputs.version }}_${{ matrix.archive }}
+          BINARY: ${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          (cd dist && grep -F " $ARCHIVE" SHA256SUMS | sha256sum -c -)
+          mkdir unpacked
+          case "$ARCHIVE" in
+            *.zip) unzip -q "dist/$ARCHIVE" -d unpacked ;;
+            *) tar -xzf "dist/$ARCHIVE" -C unpacked ;;
+          esac
+          got=$("unpacked/$BINARY" version)
+          echo "$got"
+          want="kg $VERSION (commit ${GITHUB_SHA:0:12}, "
+          case "$got" in
+            "$want"*) ;;
+            *) echo "::error::kg version printed '$got', want prefix '$want'"; exit 1 ;;
+          esac
+
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    needs: package
+    needs: [package, verify-packages]
     runs-on: ubuntu-latest
     permissions:
       contents: write
