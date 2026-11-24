@@ -158,18 +158,11 @@ func (c *Console) ReadTerminalSecret(ctx context.Context, prompt string) (string
 	}
 	defer restore()
 	fmt.Fprint(f, prompt)
-	ch := make(chan lineResult, 1)
-	go func() { // ends when f is closed on return
-		s, err := readLine(bufio.NewReader(f))
-		ch <- lineResult{s, err}
-	}()
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case r := <-ch:
+	line, err := readTerminalLine(ctx, f)
+	if err == nil {
 		fmt.Fprintln(f)
-		return r.s, r.err
 	}
+	return line, err
 }
 
 // ShowSecret prints a revealed value on the console (the broker's own terminal).

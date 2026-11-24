@@ -3,6 +3,7 @@
 package tty
 
 import (
+	"context"
 	"os"
 
 	"golang.org/x/sys/windows"
@@ -27,3 +28,5 @@ func disableEcho(f *os.File) (func(), error) {
 }
 
 func openControllingTerminal() (*os.File, error) { return nil, ErrNoTerminal }
+
+func readTerminalLine(context.Context, *os.File) (string, error) { return "", ErrNoTerminal }

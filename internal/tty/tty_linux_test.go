@@ -246,7 +246,7 @@ func TestReadTerminalSecretFromControllingTerminal(t *testing.T) {
 }
 
 func TestReadTerminalSecretControllingTerminalCancel(t *testing.T) {
-	_, slave := openPTY(t)
+	master, slave := openPTY(t)
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -262,5 +262,15 @@ func TestReadTerminalSecretControllingTerminalCancel(t *testing.T) {
 	}
 	if m := terminalMode(t, slave); m.Lflag&unix.ECHO == 0 {
 		t.Fatal("echo not restored after a cancelled prompt")
+	}
+	// The expired prompt must not leave a reader behind that takes the next answer.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		master.Write([]byte("next-answer\n"))
+	}()
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel2()
+	if got, err := c.ReadTerminalSecret(ctx2, "pw again? "); err != nil || got != "next-answer" {
+		t.Fatalf("second ReadTerminalSecret = %q, %v; want the next line typed", got, err)
 	}
 }
