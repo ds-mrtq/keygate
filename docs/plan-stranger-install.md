@@ -1,6 +1,7 @@
 # Plan: a stranger installs and uses KeyGate in 10 minutes
 
-Status: **proposed, waiting for the owner's approval on this PR.** No build work starts before that.
+Status: **approved by the owner on 2026-11-24** (PR #25): the recommended option of Q1 to Q6, with
+one added condition on Q1 (section 3).
 
 Outcome owned: *KeyGate that a stranger can install and use on Linux and Windows in 10 minutes,
 with weekly releases that ship checksums.*
@@ -71,6 +72,14 @@ Not verified from here (no Windows machine in the planning session):
 Approving this PR approves the recommended option of each. Write a different choice in a PR
 comment and the plan is updated before work starts.
 
+**Owner's decision (PR #25, 2026-11-24):** all six recommended options, with this condition on
+Q1: the broker accepts the device unlock password as a user-presence approval only when it reads
+it from a real interactive terminal (stdin is a TTY, or the controlling terminal `/dev/tty`)
+attached to the broker process itself. It refuses it, and falls back to "approve from another
+device", when stdin is a pipe or a file, or when the password arrives through the socket, an
+environment variable, a flag or any client command. Tests cover both cases (accepted from a TTY,
+refused from a pipe), and the rule is stated in `docs/DESIGN.md` and the quick start.
+
 | # | Question | Recommended | Alternatives |
 |---|---|---|---|
 | Q1 | How does a single Linux machine approve? | Where the OS has no user-presence, a `user-presence` approval is answered by typing the **device unlock password at the broker's own terminal** (the same gate that already unlocks the vault; an agent cannot type there). `approval: device` keeps its meaning: another device must sign. | (b) Keep today's behaviour and require a second Windows/macOS device or a phone: Linux cannot meet 10 minutes. (c) Something else you prefer. |
@@ -120,9 +129,14 @@ value. Pushes go only to PR branches on `ds-mrtq/keygate`.
   chosen in Q1. With the recommended option: a wrong password is refused and counted, the prompt
   shows the same review text as today, the audit line records how it was approved, and
   `approval: device` is untouched. `docs/CLI.md`, `docs/DESIGN.md` and both READMEs' security
-  sections are updated in the same PR.
+  sections are updated in the same PR. Per the owner's Q1 condition, the password is read only
+  from an interactive terminal attached to the broker process (stdin a TTY, or `/dev/tty`); with
+  stdin a pipe or file, or a password offered through the socket, an environment variable, a flag
+  or a client command, it is refused and the broker falls back to "approve from another device".
+  `docs/DESIGN.md` states this rule.
 - **Self-check:** the new tests fail on `main` and pass on the branch (both outputs in the
-  description); tests that an agent-side client cannot supply the password over the socket and
+  description); a test that the password is accepted from a TTY and one that it is refused from
+  a pipe; tests that an agent-side client cannot supply the password over the socket and
   that `approval: device` still rejects the broker's own device; a manual run with a production
   build on a clean Linux machine, transcript in the description (fake secret).
 - **Done when:** the Linux stopwatch steps 3 to 5 complete on one machine with no other device.
@@ -178,7 +192,8 @@ value. Pushes go only to PR branches on `ds-mrtq/keygate`.
 - **Change:** `README.md` and `README.vi.md` get the same quick start: install on Linux and on
   Windows (script and manual steps with checksum verification), then one first-run walkthrough
   with a generic env-secret and a tiny hash-pinned demo script (no Oracle, no relay, no phone),
-  each prompt shown with what to type, ending at the masked output and the audit line. Building
+  each prompt shown with what to type, ending at the masked output and the audit line. It states
+  the Q1 rule: the approval password is only accepted typed at the broker's own terminal. Building
   from source, Oracle wallets, phone approvals and agent integration move below it. The archive's
   packaged README follows automatically.
 - **Self-check:** a CI job runs the documented Linux commands, copied from the README by a script
