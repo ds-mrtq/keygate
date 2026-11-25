@@ -252,7 +252,13 @@ func (b *Broker) Unlock(ctx context.Context) error {
 	return err
 }
 
-func (b *Broker) session(ctx context.Context) (*session, error) {
+func (b *Broker) session(ctx context.Context) (*session, error) { return b.unlockSession(ctx, false) }
+
+// errNoPresenceUnlock: a locked vault on a system without user-presence reopens only with the device
+// password typed at the broker's own terminal.
+var errNoPresenceUnlock = errors.New("vault đang khóa: hệ thống không có user-presence, mở khóa cần mật khẩu thiết bị gõ tại terminal của broker")
+
+func (b *Broker) unlockSession(ctx context.Context, startup bool) (*session, error) {
 	b.mu.Lock()
 	s := b.sess
 	b.mu.Unlock()
@@ -269,7 +275,7 @@ func (b *Broker) session(ctx context.Context) (*session, error) {
 	}
 	b.mu.Unlock()
 
-	res, err := b.humanApprove(ctx, nil, approvalReq{op: "unlock", command: "mở khóa vault KeyGate", mode: policy.ApprovalUserPresence, session: true})
+	res, err := b.humanApprove(ctx, nil, approvalReq{op: "unlock", command: "mở khóa vault KeyGate", mode: policy.ApprovalUserPresence, session: true, startup: startup})
 	if err != nil {
 		if isPending(err) {
 			return nil, err
@@ -277,7 +283,10 @@ func (b *Broker) session(ctx context.Context) (*session, error) {
 		if !errors.Is(err, approve.ErrUnsupported) {
 			return nil, fmt.Errorf("mở khóa bị từ chối: %w", err)
 		}
-		// No user-presence on this OS: the device password prompt (devkey) is the gate.
+		if !startup {
+			return nil, errNoPresenceUnlock
+		}
+		// Start-up on a system without user-presence: the device password that loaded the key is the gate.
 	}
 	s, err = b.openStore()
 	if err != nil {
@@ -473,7 +482,7 @@ func (b *Broker) SetFromUI(ctx context.Context, r api.SetRequest, value string) 
 // A refusal leaves the broker running and locked.
 func (b *Broker) startupUnlock(ctx context.Context) {
 	defer close(b.startupDone)
-	s, err := b.session(ctx)
+	s, err := b.unlockSession(ctx, true)
 	if err != nil {
 		b.logf("chưa mở khóa: %v", err)
 		return
