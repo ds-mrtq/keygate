@@ -1,0 +1,7 @@
+go test fuzz v1
+[]byte("hello\n")
+string("stdout")
+string("waiting <for> & \"phone\"")
+string("denied")
+int(-9)
+[]byte("{\"&0000\":0}")
