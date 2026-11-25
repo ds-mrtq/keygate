@@ -34,6 +34,7 @@ type approvalReq struct {
 	mode      string // policy.ApprovalUserPresence | policy.ApprovalDevice
 	localOnly bool   // never offered to the phone
 	session   bool   // the phone may answer "allow and open a work session"
+	startup   bool   // the start-up unlock, right after the device key was loaded
 }
 
 // approvalRes is the outcome: choice is allow|session, by is "hello" | "paste:<dev>" | "remote:<dev>".
@@ -231,11 +232,14 @@ func (b *Broker) approveLocal(ctx context.Context, s *session, rq approvalReq) (
 			b.touch()
 			return approvalRes{choice: "allow", by: "hello"}, nil
 		}
-		if !errors.Is(err, approve.ErrUnsupported) || s == nil {
+		if !errors.Is(err, approve.ErrUnsupported) || rq.startup {
 			return approvalRes{}, err
 		}
 		if res, ok, err := b.approveByTTYPassword(ctx, prompt); ok {
 			return res, err
+		}
+		if s == nil {
+			return approvalRes{}, err
 		}
 	}
 	if s == nil {
