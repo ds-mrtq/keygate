@@ -161,6 +161,7 @@ func (a *app) cmdTray(args []string) error {
 				}
 			}))
 		},
+		Policy:  func() { report(trayPolicy(ctx, b, filepath.Join(a.home, "policy.yaml"))) },
 		OpenLog: func() { report(wingui.LogWindow(ctx, filepath.Join(a.home, trayLogName))) },
 		Quit:    cancel,
 	}
@@ -360,6 +361,27 @@ func traySecrets(ctx context.Context, b *broker.Broker, logf io.Writer, addSecre
 		case aerr != nil:
 			fmt.Fprintf(logf, "[tray] %s: %v\n", act.Action, aerr)
 			status, tone = "Không thực hiện được: "+aerr.Error(), "del"
+		}
+	}
+}
+
+// trayPolicy is the "Policy…" menu: the policy in force, its warnings and what policy.yaml would
+// change, read-only; Làm mới re-reads, Mở policy.yaml opens the file (applying stays `kg policy apply`).
+func trayPolicy(ctx context.Context, b *broker.Broker, polPath string) error {
+	for {
+		doc, err := b.PolicyForUI(ctx)
+		if err != nil {
+			return err
+		}
+		act, err := wingui.PolicyWindow(ctx, doc)
+		if errors.Is(err, wingui.ErrCanceled) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if act == "open" {
+			return wingui.OpenFile(polPath)
 		}
 	}
 }

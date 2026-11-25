@@ -115,31 +115,45 @@ func policyReview(polPath string, base, p *policy.Policy, oldVer uint64) (string
 			doc.Badges = append(doc.Badges, approve.Badge{Text: fmt.Sprintf("%d %s", n, b.text), Tone: b.tone})
 		}
 	}
-	if len(warns) > 0 {
-		fmt.Fprintf(&t, "CẢNH BÁO (%d):\n", len(warns))
-		for _, w := range warns {
+	var news []policy.Warning
+	nOld := 0
+	for _, w := range warns {
+		if w.Old {
+			nOld++
+		} else {
+			news = append(news, w)
+		}
+	}
+	if len(news) > 0 {
+		fmt.Fprintf(&t, "CẢNH BÁO của thay đổi này (%d):\n", len(news))
+		for _, w := range news {
 			t.WriteString(approve.Sanitize(w.Text(), 1000) + "\n")
-			doc.Rows = append(doc.Rows, approve.ReviewRow{Group: approve.GroupWarn, Op: "warn", Label: "Cảnh báo",
-				Secret: approve.Sanitize(w.Secret, 200), Prod: policy.IsProd(w.Secret, ""),
-				What: approve.Sanitize(w.Msg, 500), Detail: approve.Sanitize(w.Text(), 1000)})
+			doc.Rows = append(doc.Rows, warnRow(w))
 		}
 		t.WriteString("\n")
-		doc.Badges = append(doc.Badges, approve.Badge{Text: fmt.Sprintf("%d cảnh báo", len(warns)), Tone: approve.ToneWarn})
+		doc.Badges = append(doc.Badges, approve.Badge{Text: fmt.Sprintf("%d cảnh báo", len(news)), Tone: approve.ToneWarn})
 	} else {
-		doc.Badges = append(doc.Badges, approve.Badge{Text: "không cảnh báo", Tone: approve.ToneAdd})
+		doc.Badges = append(doc.Badges, approve.Badge{Text: "thay đổi không có cảnh báo", Tone: approve.ToneAdd})
+	}
+	// Grants identical to the applied version were approved before: counted here, listed in the
+	// tray's Policy window, so this dialog only holds what is being decided now.
+	if nOld > 0 || len(keptProd) > 0 {
+		fmt.Fprintf(&t, "Không đổi so với v%d: %d cảnh báo cũ, %d grant secret PROD giữ nguyên (xem ở cửa sổ Policy của khay KeyGate).\n", oldVer, nOld, len(keptProd))
+	}
+	if nOld > 0 {
+		doc.Badges = append(doc.Badges, approve.Badge{Text: fmt.Sprintf("%d cảnh báo cũ (xem ở cửa sổ Policy)", nOld), Tone: approve.ToneMuted})
 	}
 	if len(keptProd) > 0 {
-		fmt.Fprintf(&t, "Không đổi, đã duyệt ở bản trước: %d grant secret PROD\n", len(keptProd))
-		for _, k := range keptProd {
-			k = approve.Sanitize(k, 200)
-			t.WriteString("  • " + k + "\n")
-			doc.Rows = append(doc.Rows, approve.ReviewRow{Group: approve.GroupKept, Op: "kept", Label: "Giữ nguyên", Secret: k, Prod: true,
-				What: "đã duyệt ở bản trước", Detail: k + ": grant giữ nguyên như bản đã duyệt trước, không cần xem lại."})
-		}
 		doc.Badges = append(doc.Badges, approve.Badge{Text: fmt.Sprintf("%d PROD giữ nguyên", len(keptProd)), Tone: approve.ToneMuted})
 	}
 	doc.Text = t.String()
-	return doc.Text, doc, len(changes), len(warns)
+	return doc.Text, doc, len(changes), len(news)
+}
+
+func warnRow(w policy.Warning) approve.ReviewRow {
+	return approve.ReviewRow{Group: approve.GroupWarn, Op: "warn", Label: "Cảnh báo",
+		Secret: approve.Sanitize(w.Secret, 200), Prod: policy.IsProd(w.Secret, ""),
+		What: approve.Sanitize(w.Msg, 500), Detail: approve.Sanitize(w.Text(), 1000)}
 }
 
 func changeRow(c policy.Change) approve.ReviewRow {
