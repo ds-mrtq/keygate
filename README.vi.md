@@ -106,43 +106,213 @@ sequenceDiagram
 
 ## Bắt đầu nhanh
 
-Tải bản phát hành, xác minh và ký: [Releases](docs/RELEASE.md) (tiếng Anh).
+Mười phút trên một máy Ubuntu 24.04 hoặc Windows 11 sạch (x86-64 hoặc arm64): cài bản phát hành,
+kiểm tra SHA-256, tạo vault, và để một lệnh dùng một secret giả mà không nhìn thấy nó. Không cần
+Go, không cần clone repo này, không cần tài khoản Cloudflare, không cần điện thoại.
+
+Mọi lời nhắc bạn sẽ gặp và cần gõ gì được liệt kê ở
+[các lời nhắc bạn sẽ thấy](#các-lời-nhắc-bạn-sẽ-thấy).
+
+### 1. Cài trên Linux
+
+Bằng script (tải bản phát hành mới nhất và `SHA256SUMS`, từ chối cài nếu checksum không khớp,
+cài `kg` vào `~/.local/bin`, không cần `sudo`):
+
+<!-- quickstart:linux-install-script -->
+```bash
+curl -fsSL https://raw.githubusercontent.com/ds-mrtq/keygate/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+kg version
+```
+
+Hoặc cài tay. Đặt `VERSION` là tag mới nhất trên [trang Releases](https://github.com/ds-mrtq/keygate/releases),
+và `ARCH` là `arm64` trên máy ARM:
+
+<!-- quickstart:linux-install-manual -->
+```bash
+VERSION=v0.1.0
+ARCH=amd64
+curl -fsSLO "https://github.com/ds-mrtq/keygate/releases/download/$VERSION/kg_${VERSION}_linux_$ARCH.tar.gz"
+curl -fsSLO "https://github.com/ds-mrtq/keygate/releases/download/$VERSION/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS          # phải in: kg_..._linux_....tar.gz: OK
+mkdir -p ~/.local/bin
+tar -xzf "kg_${VERSION}_linux_$ARCH.tar.gz" -C ~/.local/bin kg
+export PATH="$HOME/.local/bin:$PATH"
+kg version                                        # phải in: kg <VERSION> (commit ..., linux/...)
+```
+
+Dừng lại nếu `sha256sum` không in `OK`: tệp tải về không phải tệp đã phát hành. Thêm dòng
+`export PATH=...` vào `~/.profile` để `kg` luôn có trong PATH.
+
+### 2. Cài trên Windows
+
+Trong PowerShell, bằng script (cài `kg.exe` và `kgw.exe` vào `%LOCALAPPDATA%\Programs\KeyGate`
+và thêm thư mục đó vào PATH của người dùng, không cần quyền quản trị):
+
+<!-- quickstart:windows-install-script -->
+```powershell
+irm https://raw.githubusercontent.com/ds-mrtq/keygate/main/install.ps1 | iex
+kg version
+```
+
+Hoặc cài tay (`$Version` là tag mới nhất trên [trang Releases](https://github.com/ds-mrtq/keygate/releases);
+dùng `arm64` thay cho `amd64` trên máy ARM):
+
+<!-- quickstart:windows-install-manual -->
+```powershell
+$Version = 'v0.1.0'
+$Zip = "kg_${Version}_windows_amd64.zip"
+$Base = "https://github.com/ds-mrtq/keygate/releases/download/$Version"
+Invoke-WebRequest "$Base/$Zip" -OutFile $Zip -UseBasicParsing
+Invoke-WebRequest "$Base/SHA256SUMS" -OutFile SHA256SUMS -UseBasicParsing
+$Want = ((Get-Content SHA256SUMS) -match " $Zip$" -split ' ')[0]
+(Get-FileHash $Zip -Algorithm SHA256).Hash.ToLower() -eq $Want   # phải in: True
+$Dir = "$env:LOCALAPPDATA\Programs\KeyGate"
+Expand-Archive $Zip $Dir -Force
+[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ";$Dir", 'User')
+$env:Path += ";$Dir"
+kg version                                        # phải in: kg <Version> (commit ..., windows/...)
+```
+
+Dừng lại nếu phép kiểm tra in `False`. Lần đầu chạy `kgw.exe`, Windows SmartScreen có thể cảnh báo
+nhà phát hành không rõ vì tệp chưa được ký mã: chọn **More info**, rồi **Run anyway**.
+
+Để kiểm tra cả nguồn gốc bản build, dùng [GitHub CLI](https://cli.github.com/):
+`gh attestation verify <tệp nén> --repo ds-mrtq/keygate`. Xem thêm [`docs/RELEASE.md`](docs/RELEASE.md) (tiếng Anh).
+
+### 3. Chạy lần đầu trên Linux
+
+Bạn cần hai terminal. **Terminal 1** là terminal riêng của broker: nó giữ vault mở và là nơi duy
+nhất gõ giá trị và duyệt. **Terminal 2** là nơi bạn, hoặc sau này một AI agent, chạy lệnh.
+
+Ở terminal 1, tạo vault, rồi chạy broker và để nó chạy:
+
+<!-- quickstart:linux-terminal-1 -->
+```bash
+kg init --label laptop
+kg broker
+```
+
+`kg init` hỏi một mật khẩu chủ mới và một mật khẩu mở khóa thiết bị mới, rồi in **khóa giấy** một
+lần: chép lại và cất ngoài máy này. `kg broker` hỏi mật khẩu mở khóa thiết bị và in
+`[broker] đã mở khóa`.
+
+Ở terminal 2, lưu một secret giả, viết một script demo nhỏ, ghim nó trong policy, áp dụng policy
+và chạy script với secret:
+
+<!-- quickstart:linux-terminal-2 -->
+```bash
+kg set demo/token --kind env --env-name DEMO_TOKEN --env test
+mkdir -p ~/kg-demo
+printf '#!/bin/sh\necho "deploying with token $DEMO_TOKEN"\n' > ~/kg-demo/demo.sh
+cat > ~/.keygate/policy.yaml <<EOF
+grants:
+  demo/token:
+    kind: env
+    allow_commands: ["sh path:$HOME/kg-demo/demo.sh $(kg hash ~/kg-demo/demo.sh) !exact"]
+    approval: user-presence
+EOF
+kg policy apply
+kg run --secret demo/token -- sh ~/kg-demo/demo.sh
+kg audit show
+```
+
+Điều gì xảy ra:
+
+1. `kg set` hỏi giá trị **ở terminal 1**. Gõ một giá trị giả bất kỳ, ví dụ `fake-token-123`.
+   Giá trị không bao giờ đi qua terminal 2 hay socket.
+2. `kg policy apply` hiện policy ở terminal 1 và hỏi mật khẩu mở khóa thiết bị ở đó để duyệt.
+3. `kg run` không cần duyệt thêm: broker đã mở một phiên làm việc khi mở khóa. Terminal 2 in
+   `deploying with token [kg:demo/token]`: script nhận được giá trị, đầu ra thì không.
+4. `kg audit show` hỏi mật khẩu mở khóa thiết bị ở terminal 2 (nó tự mở nhật ký audit) và liệt kê
+   mọi thao tác. Dòng `policy` kết thúc bằng `approval=tty-password` (duyệt ở terminal 1); dòng
+   cuối là lần chạy, không có giá trị:
+   `... run       demo/token env=test agent=cli ... approval=session exit=0 | ["sh" "/home/you/kg-demo/demo.sh"]`.
+
+**Quy tắc duyệt trên Linux.** Linux không có Windows Hello hay Touch ID, nên duyệt là gõ mật khẩu
+mở khóa thiết bị tại một terminal tương tác gắn với chính broker (stdin là TTY, hoặc `/dev/tty`).
+Mật khẩu đưa vào qua pipe, hoặc gửi qua socket, biến môi trường, cờ hay bất kỳ lệnh client nào, đều
+bị từ chối, và broker chuyển sang duyệt từ thiết bị khác. Vì vậy việc duyệt diễn ra ở terminal 1,
+không bao giờ ở terminal 2, nơi agent chạy.
+
+### 4. Chạy lần đầu trên Windows
+
+Trong PowerShell:
+
+<!-- quickstart:windows-init -->
+```powershell
+kg init --label laptop
+```
+
+Lệnh hỏi mật khẩu chủ mới hai lần, rồi in **khóa giấy** một lần: chép lại và cất ngoài máy này.
+Trên Windows, khóa thiết bị được bảo vệ bằng tài khoản Windows của bạn, nên không có mật khẩu
+thiết bị.
+
+Chạy broker khay: chạy `kgw tray`, hoặc nhấp đúp `kgw.exe`. Windows Hello hỏi khuôn mặt, vân tay
+hoặc PIN, và biểu tượng khay chuyển xanh. Sau đó:
+
+```powershell
+kg set demo/token --kind env --env-name DEMO_TOKEN --env test
+New-Item -ItemType Directory -Force "$HOME\kg-demo" | Out-Null
+Set-Content "$HOME\kg-demo\demo.ps1" 'Write-Output "deploying with token $env:DEMO_TOKEN"'
+$Script = "$HOME\kg-demo\demo.ps1" -replace '\\', '/'
+$Hash = kg hash "$HOME\kg-demo\demo.ps1"
+Set-Content "$HOME\.keygate\policy.yaml" @"
+grants:
+  demo/token:
+    kind: env
+    allow_commands: ["powershell path:$Script $Hash !exact"]
+    approval: user-presence
+"@
+kg policy apply
+kg run --secret demo/token -- powershell "$HOME\kg-demo\demo.ps1"
+kg audit show
+```
+
+`kg set` mở hộp thoại KeyGate để nhập giá trị: gõ một giá trị giả. `kg policy apply` hiện policy và
+hỏi Windows Hello. `kg run` in `deploying with token [kg:demo/token]`, và `kg audit show` liệt kê
+lần chạy. Nếu Windows Hello chưa được thiết lập, thông báo lỗi chỉ chỗ bật nó:
+Settings > Accounts > Sign-in options.
+
+### Các lời nhắc bạn sẽ thấy
+
+| Lời nhắc | Ở đâu | Gõ gì |
+|---|---|---|
+| `Mật khẩu chủ (>= 12 ký tự):` | `kg init` | Một mật khẩu mới; cùng với khóa giấy, nó cần cho các thao tác của chủ sở hữu |
+| `Nhập lại mật khẩu chủ:` | `kg init` | Gõ lại như trên |
+| `Mật khẩu mở khóa thiết bị:` | `kg init`, `kg broker`, `kg audit show` (Linux) | Mật khẩu mới ở `kg init`, sau đó gõ đúng mật khẩu ấy |
+| `Nhập lại:` | `kg init` (Linux) | Gõ lại như trên |
+| `KHÓA GIẤY` | `kg init` | Không gõ gì: chép lại |
+| `[broker] Nhập giá trị cho "demo/token"` | Terminal 1 | Giá trị giả (ẩn) |
+| `Mật khẩu mở khóa thiết bị để duyệt:` | Terminal 1 | Mật khẩu mở khóa thiết bị, sau khi đọc phần xem lại phía trên |
+
+Mọi thứ gõ ở lời nhắc mật khẩu đều không hiện ra.
+
+### Bước tiếp theo
+
+- **Secret của bạn**: `kg import --dotenv .env --prefix myrepo/ --env dev`, rồi một grant cho mỗi
+  secret trong `policy.yaml` và `kg policy apply`. Tham khảo: [`docs/CLI.md`](docs/CLI.md) (tiếng Anh).
+- **Hook và MCP cho agent**: [`integrations/README.md`](integrations/README.md).
+- **Duyệt bằng điện thoại** qua Cloudflare Worker của riêng bạn: [`relay/README.md`](relay/README.md).
+
+### Oracle wallet
+
+Secret loại `oracle-wallet` được giao cho SQLcl dưới dạng wallet tạm:
 
 ```bash
-# build
-go build -o kg ./cmd/kg
-go build -ldflags "-H=windowsgui" -o kgw.exe ./cmd/kg     # broker khay trên Windows
-go test -count=1 -tags kgtest ./...
-
-# tạo vault (khóa giấy in một lần: chép lại cẩn thận)
-kg init --label laptop
-
-# chạy broker: khay trên Windows, foreground ở nơi khác
-kgw tray        # hoặc: kg broker
-# Linux: duyệt bằng mật khẩu thiết bị, chỉ gõ tại terminal của chính broker
-
-# thêm secret, viết policy, áp dụng
 kg set db/test/app --kind oracle-wallet --env test --tns-alias ebs_test --user APP
-kg import --dotenv .env --prefix myrepo/ --env dev
-kg policy apply
-
-# cho agent dùng
 kg run --secret db/test/app -- sql /@ebs_test @D:/repos/x/sql/check.sql
 ```
 
-`policy.yaml` tối thiểu:
+### Build từ mã nguồn
 
-```yaml
-grants:
-  db/test/*:
-    kind: oracle-wallet
-    tns_alias: ebs_test
-    allow_commands: ["sql /@ebs_test @path:D:/repos/x/sql/**/*.sql"]
-    approval: user-presence
-    max_runtime: 10m
+Cần Go (phiên bản trong [`go.mod`](go.mod)).
+
+```bash
+go build -o kg ./cmd/kg
+go build -ldflags "-H=windowsgui" -o kgw.exe ./cmd/kg     # broker khay trên Windows
+go test -count=1 -tags kgtest ./...
 ```
-
-Relay và duyệt bằng điện thoại: xem [`relay/README.md`](relay/README.md) (`npx wrangler deploy`, điền ID vault vào `ALLOWED_VAULTS`, sinh khóa VAPID bằng `node scripts/vapid.mjs`). Hook và MCP cho agent: [`integrations/README.md`](integrations/README.md).
 
 ## Mô hình bảo mật
 

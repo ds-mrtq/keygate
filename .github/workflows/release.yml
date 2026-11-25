@@ -7,7 +7,7 @@ on:
   schedule:
     - cron: '0 2 * * 1'
   pull_request:
-    paths: ['.github/workflows/release.yml', 'install.sh', 'install.ps1', 'tools/release/**']
+    paths: ['.github/workflows/release.yml', 'install.sh', 'install.ps1', 'tools/release/**', 'tools/quickstart/**', 'README.md', 'README.vi.md']
   workflow_dispatch:
     inputs:
       dry_run:
@@ -415,6 +415,47 @@ jobs:
             grep -q 'checksum mismatch' err.txt
             if [ -e "$dir" ]; then echo "::error::$ps install.ps1 created files"; ls -la "$dir"; exit 1; fi
           done
+
+  # Runs the README quick start as written (tools/quickstart copies the commands out of the README),
+  # against this run's packages. Linux: a bare ubuntu:24.04 container, every terminal a pty, ending at
+  # the masked output and the audit entry. Windows: every command up to `kgw tray` (Windows Hello).
+  quickstart:
+    needs: [build, package]
+    name: README quick start (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-packages
+          path: dist
+      - name: EN and VI quick starts match, links resolve
+        if: runner.os == 'Linux'
+        run: python3 tools/quickstart/quickstart.py check --external
+      # curl is the one documented prerequisite missing from the image; python3 runs the harness.
+      - name: Linux quick start in a bare ubuntu:24.04 container
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          docker run --rm -e VERSION -v "$PWD:/src:ro" ubuntu:24.04 sh -euc '
+            apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends curl ca-certificates python3 >/dev/null
+            python3 /src/tools/quickstart/quickstart.py linux --dist /src/dist --version "$VERSION"
+          '
+      - name: Windows quick start up to Windows Hello
+        if: runner.os == 'Windows'
+        env:
+          PYTHONUTF8: '1'
+        run: python tools/quickstart/quickstart.py windows --dist dist --version "$VERSION"
 
   # Creates the tag (weekly) and the published release in one step with the workflow's token. A tag
   # created by GITHUB_TOKEN starts no other workflow run, so this run is the only one for it.
