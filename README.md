@@ -115,6 +115,8 @@ The CLI speaks Vietnamese. Every prompt you will meet is listed with what to typ
 
 ### 1. Install on Linux
 
+The install needs `curl`; a minimal Ubuntu install may not have it: `sudo apt install curl`.
+
 With the script (downloads the newest release and `SHA256SUMS`, refuses to install on a checksum
 mismatch, installs `kg` to `~/.local/bin`, no `sudo`):
 
@@ -207,6 +209,7 @@ and run the script with the secret:
 
 <!-- quickstart:linux-terminal-2 -->
 ```bash
+export PATH="$HOME/.local/bin:$PATH"              # a new terminal: kg is on its PATH only after you log in again
 kg set demo/token --kind env --env-name DEMO_TOKEN --env test
 mkdir -p ~/kg-demo
 printf '#!/bin/sh\necho "deploying with token $DEMO_TOKEN"\n' > ~/kg-demo/demo.sh

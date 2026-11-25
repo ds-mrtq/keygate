@@ -115,6 +115,8 @@ Mọi lời nhắc bạn sẽ gặp và cần gõ gì được liệt kê ở
 
 ### 1. Cài trên Linux
 
+Cần có `curl`; bản cài Ubuntu tối giản có thể chưa có: `sudo apt install curl`.
+
 Bằng script (tải bản phát hành mới nhất và `SHA256SUMS`, từ chối cài nếu checksum không khớp,
 cài `kg` vào `~/.local/bin`, không cần `sudo`):
 
@@ -205,6 +207,7 @@ và chạy script với secret:
 
 <!-- quickstart:linux-terminal-2 -->
 ```bash
+export PATH="$HOME/.local/bin:$PATH"              # terminal mới: kg chỉ có trong PATH sau khi đăng nhập lại
 kg set demo/token --kind env --env-name DEMO_TOKEN --env test
 mkdir -p ~/kg-demo
 printf '#!/bin/sh\necho "deploying with token $DEMO_TOKEN"\n' > ~/kg-demo/demo.sh
