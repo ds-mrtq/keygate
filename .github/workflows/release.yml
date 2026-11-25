@@ -281,9 +281,9 @@ jobs:
       - name: install.sh refuses a tampered archive
         if: runner.os == 'Linux'
         run: |
-          set -uo pipefail
-          sh install.sh --version "$VERSION" --base-url "$PWD/tampered" --dir "$RUNNER_TEMP/kg-bad" 2>err.txt
-          code=$?
+          set -euo pipefail
+          code=0
+          sh install.sh --version "$VERSION" --base-url "$PWD/tampered" --dir "$RUNNER_TEMP/kg-bad" 2>err.txt || code=$?
           cat err.txt
           if [ "$code" -eq 0 ]; then echo '::error::install.sh exited 0 on a tampered archive'; exit 1; fi
           grep -q 'checksum mismatch' err.txt
@@ -329,11 +329,11 @@ jobs:
       - name: install.ps1 refuses a tampered archive (5.1 and pwsh)
         if: runner.os == 'Windows'
         run: |
-          set -uo pipefail
+          set -euo pipefail
           for ps in powershell pwsh; do
             dir="$RUNNER_TEMP/kg-bad-$ps"
-            "$ps" -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Version "$VERSION" -BaseUrl "$PWD/tampered" -InstallDir "$dir" 2>err.txt
-            code=$?
+            code=0
+            "$ps" -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Version "$VERSION" -BaseUrl "$PWD/tampered" -InstallDir "$dir" 2>err.txt || code=$?
             cat err.txt
             if [ "$code" -eq 0 ]; then echo "::error::$ps install.ps1 exited 0 on a tampered archive"; exit 1; fi
             grep -q 'checksum mismatch' err.txt
