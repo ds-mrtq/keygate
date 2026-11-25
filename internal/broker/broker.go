@@ -498,6 +498,12 @@ func (b *Broker) startupUnlock(ctx context.Context) {
 // Serve sweeps leftovers, listens on KG_HOME/broker.sock and serves until ctx is cancelled. The
 // start-up unlock runs in the background: the broker stays up (locked) when it is refused.
 func (b *Broker) Serve(ctx context.Context) error {
+	// Before the sweep: a running broker's `kg run` children still read their files in RunDir.
+	sock := SockPath(b.cfg.Home)
+	if c, err := net.DialTimeout("unix", sock, time.Second); err == nil {
+		c.Close()
+		return errors.New("broker đã chạy trên " + sock)
+	}
 	if err := execwrap.Sweep(RunDir(b.cfg.Home)); err != nil {
 		return fmt.Errorf("dọn thư mục run: %w", err)
 	}
@@ -532,11 +538,6 @@ func (b *Broker) Serve(ctx context.Context) error {
 	}
 	b.loadGrants()
 	b.loadMembers()
-	sock := SockPath(b.cfg.Home)
-	if c, err := net.DialTimeout("unix", sock, time.Second); err == nil {
-		c.Close()
-		return errors.New("broker đã chạy trên " + sock)
-	}
 	os.Remove(sock)
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
