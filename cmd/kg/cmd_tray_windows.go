@@ -91,6 +91,11 @@ func (a *app) cmdTray(args []string) error {
 				t.Balloon("KeyGate cần Windows Hello", text)
 			}
 		},
+		OnStartupLocked: func(err error) {
+			if t := tray.Load(); t != nil {
+				t.Balloon("KeyGate chưa mở khóa", err.Error())
+			}
+		},
 	})
 	if err != nil {
 		return err

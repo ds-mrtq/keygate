@@ -1384,3 +1384,34 @@ func auditEvents(t *testing.T, f *fixture) []string {
 	}
 	return evs
 }
+
+func TestStartupLockedReportsRefusal(t *testing.T) {
+	got := make(chan error, 1)
+	refusal := fmt.Errorf("%w (NotConfiguredForUser): %s", approve.ErrNotVerified, approve.HelloHint("NotConfiguredForUser"))
+	f := newFixtureWith(t, 0, 0, func(c *Config) {
+		c.Approver = approve.Func(func(context.Context, string) error { return refusal })
+		c.OnStartupLocked = func(err error) { got <- err }
+	})
+	select {
+	case err := <-got:
+		if !errors.Is(err, approve.ErrNotVerified) || !strings.Contains(err.Error(), "ms-settings:signinoptions") {
+			t.Fatalf("startup refusal lost its reason: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("OnStartupLocked not called")
+	}
+	if f.b.UIState().Unlocked {
+		t.Fatal("broker must stay locked")
+	}
+}
+
+func TestStartupUnlockedDoesNotReportLocked(t *testing.T) {
+	got := make(chan error, 1)
+	f := newFixtureWith(t, 0, 0, func(c *Config) { c.OnStartupLocked = func(err error) { got <- err } })
+	<-f.b.startupDone
+	select {
+	case err := <-got:
+		t.Fatalf("unexpected OnStartupLocked: %v", err)
+	default:
+	}
+}

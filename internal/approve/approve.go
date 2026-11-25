@@ -95,10 +95,31 @@ func (h *Hello) Approve(ctx context.Context, prompt string) error {
 	if exe == "" {
 		exe, env = pshell.System()
 	}
-	return runVerifier(ctx, h.Timeout, exe, HelloArgs(Sanitize(prompt, MaxPrompt)), env)
+	return runVerifier(ctx, h.Timeout, exe, HelloArgs(Sanitize(prompt, MaxPrompt)), env, HelloHint)
 }
 
-func runVerifier(ctx context.Context, timeout time.Duration, exe string, args, env []string) error {
+// HelloHint returns what the user can do about a UserConsentVerificationResult other than
+// Verified, or "" when there is nothing to add.
+func HelloHint(result string) string {
+	const addPIN = "Settings > Accounts > Sign-in options (Win+R, ms-settings:signinoptions), thêm PIN rồi thử lại"
+	switch result {
+	case "NotConfiguredForUser":
+		return "Windows Hello chưa được thiết lập: " + addPIN
+	case "DeviceNotPresent":
+		return "máy chưa có PIN, vân tay hay khuôn mặt cho Windows Hello: " + addPIN
+	case "DisabledByPolicy":
+		return "Windows Hello bị chính sách máy (Group Policy/MDM) tắt: nhờ quản trị máy bật đăng nhập bằng PIN"
+	case "DeviceBusy":
+		return "Windows Hello đang bận với hộp thoại khác: đóng nó rồi thử lại"
+	case "RetriesExhausted":
+		return "sai quá số lần: khóa màn hình (Win+L), đăng nhập lại bằng PIN rồi thử lại"
+	case "Canceled":
+		return "hộp thoại Windows Hello đã bị đóng: thử lại và xác nhận"
+	}
+	return ""
+}
+
+func runVerifier(ctx context.Context, timeout time.Duration, exe string, args, env []string, hint func(string) string) error {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
@@ -119,6 +140,11 @@ func runVerifier(ctx context.Context, timeout time.Duration, exe string, args, e
 	}
 	if err != nil && res == "" {
 		return fmt.Errorf("không chạy được bộ xác nhận: %w", err)
+	}
+	if hint != nil {
+		if h := hint(res); h != "" {
+			return fmt.Errorf("%w (%s): %s", ErrNotVerified, res, h)
+		}
 	}
 	return fmt.Errorf("%w (%s)", ErrNotVerified, res)
 }
@@ -164,5 +190,5 @@ func (t *TouchID) Approve(ctx context.Context, prompt string) error {
 	if exe == "" {
 		exe = "/usr/bin/swift"
 	}
-	return runVerifier(ctx, t.Timeout, exe, []string{"-e", SwiftSource}, append(os.Environ(), "KG_PROMPT="+Sanitize(prompt, MaxPrompt)))
+	return runVerifier(ctx, t.Timeout, exe, []string{"-e", SwiftSource}, append(os.Environ(), "KG_PROMPT="+Sanitize(prompt, MaxPrompt)), nil)
 }

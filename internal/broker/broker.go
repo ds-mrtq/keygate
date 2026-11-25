@@ -77,6 +77,8 @@ type Config struct {
 	OnChange func()
 	// OnPrompt is called just before a user-presence prompt (Windows Hello) is shown.
 	OnPrompt func(text string)
+	// OnStartupLocked is called when the start-up unlock is refused and the broker stays locked.
+	OnStartupLocked func(err error)
 	// ApprovalWait bounds how long one request waits for a human before the client gets `pending`
 	// (default 270s, below the 300s limit of agent tools).
 	ApprovalWait time.Duration
@@ -476,6 +478,9 @@ func (b *Broker) startupUnlock(ctx context.Context) {
 	s, err := b.session(ctx)
 	if err != nil {
 		b.logf("chưa mở khóa: %v", err)
+		if b.cfg.OnStartupLocked != nil && !isPending(err) {
+			b.cfg.OnStartupLocked(err)
+		}
 		return
 	}
 	b.openSession(s, "broker-start") // the start-up unlock approval also opens the session
