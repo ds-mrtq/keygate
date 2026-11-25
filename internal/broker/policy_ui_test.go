@@ -1,6 +1,9 @@
 package broker
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +44,7 @@ func TestPolicyReviewOnlyNewWarnings(t *testing.T) {
 	if st3 := policy.UpdateStamps(nil, base, cur, 2, t1); len(st3) != 1 || st3["b/*"].Ver != 2 {
 		t.Fatalf("unchanged grant without a stamp must stay undated: %+v", st3)
 	}
-	ov := policyOverview("policy.yaml", base, 3, "", st, cur, true, nil)
+	ov := policyOverview("policy.yaml", base, 3, "", st, cur, true, nil, nil)
 	var grants, warns, changes int
 	for _, r := range ov.Rows {
 		switch r.Group {
@@ -66,8 +69,27 @@ func TestPolicyReviewOnlyNewWarnings(t *testing.T) {
 			t.Fatalf("row %s/%s when=%q, want %q", r.Group, r.Secret, r.When, want)
 		}
 	}
-	if ov := policyOverview("policy.yaml", nil, 0, "", nil, cur, true, nil); !hasBadge(ov.Badges, "chưa áp dụng") || len(ov.Rows) != 4 {
+	if ov := policyOverview("policy.yaml", nil, 0, "", nil, cur, true, nil, nil); !hasBadge(ov.Badges, "chưa áp dụng") || len(ov.Rows) != 4 {
 		t.Fatalf("nothing applied: badges=%v rows=%d", ov.Badges, len(ov.Rows))
+	}
+}
+
+// An edited policy.yaml that was not applied blocks every kg run (pin mismatch): the Policy window
+// must say so instead of calling the last approved version "in force".
+func TestPolicyWindowShowsBlockedRun(t *testing.T) {
+	f := newFixture(t, time.Hour, time.Hour)
+	f.policy(basePolicy, true)
+	if err := os.WriteFile(filepath.Join(f.home, "state", "policy.pinned.yaml"), []byte(basePolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ov, err := f.b.PolicyForUI(context.Background())
+	if err != nil || !hasBadge(ov.Badges, "v1 đang áp dụng") || hasBadge(ov.Badges, "kg run bị chặn") {
+		t.Fatalf("pinned policy: err=%v badges=%v", err, ov.Badges)
+	}
+	f.policy(basePolicy+"  extra/*:\n    allow_commands: [curl]\n", false) // edited, not applied
+	ov, err = f.b.PolicyForUI(context.Background())
+	if err != nil || !hasBadge(ov.Badges, "kg run bị chặn") || hasBadge(ov.Badges, "v1 đang áp dụng") || !strings.Contains(ov.Action, "bị chặn") {
+		t.Fatalf("edited policy: err=%v action=%q badges=%v", err, ov.Action, ov.Badges)
 	}
 }
 

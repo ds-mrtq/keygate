@@ -44,7 +44,11 @@ func (b *Broker) PolicyForUI(ctx context.Context) (approve.ReviewDoc, error) {
 		curPol, parseErr = policy.Parse(cur)
 	}
 	stamps := policy.ReadStamps(filepath.Join(b.cfg.Home, "state", "policy.times.json"))
-	return policyOverview(polPath, applied, ver, when, stamps, curPol, curErr == nil && policy.Hash(cur) != pinHash, firstErr(curErr, parseErr)), nil
+	var blocked error
+	if applied != nil {
+		_, blocked = b.loadPolicy(s) // same check as kg run: pin hash/MAC and the version floor
+	}
+	return policyOverview(polPath, applied, ver, when, stamps, curPol, curErr == nil && policy.Hash(cur) != pinHash, firstErr(curErr, parseErr), blocked), nil
 }
 
 func readOrNil(p string) []byte {
@@ -64,10 +68,11 @@ func firstErr(es ...error) error {
 	return nil
 }
 
-// policyOverview builds the Policy window: applied = the verified version in force (nil = none),
-// stamps = when each grant got its content, cur = policy.yaml as parsed now (nil when unreadable:
-// curErr), pending = cur differs from it.
-func policyOverview(polPath string, applied *policy.Policy, ver uint64, when string, stamps map[string]policy.GrantStamp, cur *policy.Policy, pending bool, curErr error) approve.ReviewDoc {
+// policyOverview builds the Policy window: applied = the last approved version verified by its pin
+// (nil = none), stamps = when each grant got its content, cur = policy.yaml as parsed now (nil when
+// unreadable: curErr), pending = cur differs from it, blocked = why kg run refuses every grant now
+// (nil = applied is in force).
+func policyOverview(polPath string, applied *policy.Policy, ver uint64, when string, stamps map[string]policy.GrantStamp, cur *policy.Policy, pending bool, curErr, blocked error) approve.ReviewDoc {
 	doc := approve.ReviewDoc{Requester: "Policy", Chain: approve.Sanitize(polPath, 500)}
 	inForce := applied != nil
 	// whenOf dates a grant in force: a matching stamp, else it predates stamping (≤ this version).
@@ -85,6 +90,13 @@ func policyOverview(polPath string, applied *policy.Policy, ver uint64, when str
 		doc.Action = "chưa có bản đã áp dụng xác minh được"
 		doc.Note = "kg run chỉ dùng policy đã áp dụng (kg policy apply, cần Windows Hello). Bảng dưới là nội dung policy.yaml hiện tại."
 		doc.Badges = append(doc.Badges, approve.Badge{Text: "chưa áp dụng", Tone: approve.ToneDel})
+	} else if blocked != nil {
+		doc.Action = fmt.Sprintf("v%d đã duyệt nhưng kg run đang bị chặn", ver)
+		doc.Note = "policy.yaml (hoặc pin) không khớp bản đã duyệt nên kg run từ chối mọi secret. Chạy kg policy apply để duyệt bản mới, hoặc trả policy.yaml về bản đã duyệt. Bảng dưới là các quyền của bản đã duyệt gần nhất."
+		if when != "" {
+			doc.Action += " (duyệt lúc " + when + ")"
+		}
+		doc.Badges = append(doc.Badges, approve.Badge{Text: "kg run bị chặn", Tone: approve.ToneDel})
 	} else {
 		doc.Action = fmt.Sprintf("đang áp dụng v%d", ver)
 		doc.Note = "Quyền kg run đang dùng và mọi cảnh báo của chúng. Cửa sổ chỉ để xem; muốn đổi thì sửa policy.yaml rồi chạy kg policy apply."
@@ -94,6 +106,9 @@ func policyOverview(polPath string, applied *policy.Policy, ver uint64, when str
 		doc.Badges = append(doc.Badges, approve.Badge{Text: fmt.Sprintf("v%d đang áp dụng", ver), Tone: approve.ToneAdd})
 	}
 	fmt.Fprintf(&t, "Policy %s.\nFile: %s\n\n", doc.Action, doc.Chain)
+	if blocked != nil {
+		fmt.Fprintf(&t, "kg run đang bị chặn: %s\n\n", approve.Sanitize(blocked.Error(), 300))
+	}
 	if curErr != nil {
 		msg := approve.Sanitize(curErr.Error(), 300)
 		fmt.Fprintf(&t, "policy.yaml hiện tại không đọc được: %s\n\n", msg)
