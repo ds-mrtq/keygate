@@ -75,6 +75,8 @@ jobs:
           else
             eval "$(sh tools/release/next-version.sh)"
             previous=$last
+            # A dry run always builds unless asked to show the skip path.
+            if [ "$mode" = dry-run ] && [ "$SIMULATE_NO_CHANGES" != true ]; then skip=false; fi
             if [ "$skip" = true ]; then
               echo "::notice::No commits on $(git rev-parse --short HEAD) since $last; nothing to release."
               publish=false
