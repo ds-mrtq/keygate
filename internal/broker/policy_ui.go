@@ -46,9 +46,25 @@ func (b *Broker) PolicyForUI(ctx context.Context) (approve.ReviewDoc, error) {
 	stamps := policy.ReadStamps(filepath.Join(b.cfg.Home, "state", "policy.times.json"))
 	var blocked error
 	if applied != nil {
-		_, blocked = b.loadPolicy(s) // same check as kg run: pin hash/MAC and the version floor
+		blocked = b.verifyPolicy(s)
 	}
 	return policyOverview(polPath, applied, ver, when, stamps, curPol, curErr == nil && policy.Hash(cur) != pinHash, firstErr(curErr, parseErr), blocked), nil
+}
+
+// verifyPolicy runs the checks loadPolicy makes before kg run (pin hash/MAC, version floor) without
+// touching polMax or the resolved-program cache: viewing must not change what a later run sees.
+func (b *Broker) verifyPolicy(s *session) error {
+	l, err := policy.LoadVerified(filepath.Join(b.cfg.Home, "policy.yaml"), filepath.Join(b.cfg.Home, "state", "policy.pin"), s.st.LocalMacKey())
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	floor := b.polMax
+	b.mu.Unlock()
+	if l.Version < floor {
+		return fmt.Errorf("%w: pin phiên bản %d < đã thấy %d (nghi khôi phục policy cũ)", policy.ErrPinMismatch, l.Version, floor)
+	}
+	return nil
 }
 
 func readOrNil(p string) []byte {
