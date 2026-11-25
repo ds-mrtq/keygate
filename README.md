@@ -214,7 +214,7 @@ cat > ~/.keygate/policy.yaml <<EOF
 grants:
   demo/token:
     kind: env
-    allow_commands: ['sh "path:$HOME/kg-demo/demo.sh" $(kg hash ~/kg-demo/demo.sh) !exact']
+    allow_commands: ["sh \"path:$HOME/kg-demo/demo.sh\" $(kg hash ~/kg-demo/demo.sh) !exact"]
     approval: user-presence
 EOF
 kg policy apply
@@ -267,7 +267,7 @@ Set-Content "$HOME\.keygate\policy.yaml" -Encoding UTF8 @"
 grants:
   demo/token:
     kind: env
-    allow_commands: ['powershell "path:$Script" $Hash !exact']
+    allow_commands: ["powershell \"path:$Script\" $Hash !exact"]
     approval: user-presence
 "@
 kg policy apply
