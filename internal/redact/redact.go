@@ -34,6 +34,45 @@ type Redactor struct {
 
 var pctRe = regexp.MustCompile(`%[0-9A-F]{2}`)
 
+// fieldRes match `key: value` / `key=value` lines and `"key": "value"` pairs in a structured
+// secret (kubeconfig, YAML, JSON, INI); group 1 is the key, groups 2-4 the value.
+var fieldRes = []*regexp.Regexp{
+	regexp.MustCompile(`(?m)^[ \t]*(?:-[ \t]+)?([A-Za-z0-9_.-]+)[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s"'#,]+))`),
+	regexp.MustCompile(`"([A-Za-z0-9_.-]+)"[ \t]*:[ \t]*(?:"([^"\r\n]*)"|()())`),
+}
+
+// credentialKey reports whether a field name in a structured secret holds a credential.
+func credentialKey(k string) bool {
+	k = strings.ToLower(k)
+	for _, w := range []string{"token", "password", "passwd", "secret", "client-key-data", "api-key", "apikey"} {
+		if strings.Contains(k, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// innerValues returns credential field values found inside a structured secret (e.g. the bearer
+// token of an imported kubeconfig), so a value parsed out and printed alone is masked too.
+func innerValues(v string) []string {
+	if !strings.ContainsAny(v, ":=") {
+		return nil
+	}
+	var out []string
+	for _, re := range fieldRes {
+		for _, m := range re.FindAllStringSubmatch(v, -1) {
+			if !credentialKey(m[1]) {
+				continue
+			}
+			val := m[2] + m[3] + m[4]
+			if len(val) >= minInterior && val != v {
+				out = append(out, val)
+			}
+		}
+	}
+	return out
+}
+
 // minInterior is the shortest base64 interior fragment that is still matched (avoids noise).
 const minInterior = 8
 
@@ -90,7 +129,11 @@ func New(secrets []Secret) *Redactor {
 		if len(s.Value) < MinLen {
 			continue
 		}
-		for _, f := range valueForms(s.Value) {
+		var vals []string
+		for _, v := range append([]string{s.Value}, innerValues(s.Value)...) {
+			vals = append(vals, valueForms(v)...)
+		}
+		for _, f := range vals {
 			raw := []byte(f)
 			add(f, s.Name)
 			add(base64.StdEncoding.EncodeToString(raw), s.Name)

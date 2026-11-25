@@ -49,3 +49,23 @@ func TestKubeconfigParsedTokenMasked(t *testing.T) {
 		}
 	}
 }
+
+func TestStructuredInnerValues(t *testing.T) {
+	const tok = "kgfake-json-token-0123456789"
+	r := New([]Secret{
+		{Name: "j", Value: `{"users":[{"name":"t","user":{"token":"` + tok + `"}}],"server":"https://10.0.0.1:6443"}`},
+		{Name: "y", Value: "auth:\n  access-token: 'kgfake-quoted-tok'\n  password=kgfake-ini-pw\n  token: short\n  user: kgfake-not-a-credential\n"},
+	})
+	for in, want := range map[string]string{
+		"Bearer " + tok:           "Bearer [kg:j]",
+		"kgfake-quoted-tok":       "[kg:y]",
+		"pw=kgfake-ini-pw":        "pw=[kg:y]",
+		"https://10.0.0.1:6443":   "https://10.0.0.1:6443",
+		"short":                   "short",
+		"kgfake-not-a-credential": "kgfake-not-a-credential",
+	} {
+		if got := r.String(in); got != want {
+			t.Errorf("%q => %q, want %q", in, got, want)
+		}
+	}
+}
