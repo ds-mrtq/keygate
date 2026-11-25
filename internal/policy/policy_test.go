@@ -195,9 +195,20 @@ func TestDiffAndWarnings(t *testing.T) {
 	if !strings.Contains(w, "approval none") || !strings.Contains(w, "PROD") || !strings.Contains(w, "glob") || len(kept) != 0 {
 		t.Fatalf("warnings: %s kept=%v", w, kept)
 	}
-	// The same PROD grant approved before is not warned again.
-	if ws, kept := Warnings(b, b); len(kept) != 1 || len(ws) != 2 { // approval none + glob, no PROD warning
+	// The same PROD grant approved before is not warned again; the remaining warnings are marked Old.
+	ws, kept = Warnings(b, b)
+	if len(kept) != 1 || len(ws) != 2 { // approval none + glob, no PROD warning
 		t.Fatalf("unchanged PROD grant: warns=%v kept=%v", ws, kept)
+	}
+	for _, x := range ws {
+		if !x.Old {
+			t.Fatalf("warning of an unchanged grant not marked Old: %v", x)
+		}
+	}
+	for _, x := range func() []Warning { w, _ := Warnings(a, b); return w }() {
+		if x.Old {
+			t.Fatalf("warning of a new grant marked Old: %v", x)
+		}
 	}
 }
 

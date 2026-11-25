@@ -32,8 +32,12 @@ type Change struct {
 	Fields   []FieldChange // mod/oracle: settings that changed, besides allow_commands; add: optional settings (New only)
 }
 
-// Warning is one risky setting of the new policy.
-type Warning struct{ Secret, Msg string }
+// Warning is one risky setting of the new policy. Old = its grant is identical to the one in the
+// last applied policy: the risk was approved before and is not part of the change under review.
+type Warning struct {
+	Secret, Msg string
+	Old         bool
+}
 
 // ApprovalText describes an approval mode for a human.
 func ApprovalText(a string) string {
@@ -263,9 +267,10 @@ func orNone(s string) string {
 	return s
 }
 
-// Warnings flags risky settings in cur: approval none, wildcard grants/commands, PROD keys. A PROD
-// grant identical to the one in old (the last applied policy, may be nil) was approved before: it is
-// returned in keptProd instead of warns so the new risks stand out.
+// Warnings flags risky settings in cur: approval none, wildcard grants/commands, PROD keys. A grant
+// identical to the one in old (the last applied policy, may be nil) was approved before: its
+// warnings carry Old, and a PROD one is returned in keptProd instead of a PROD warning, so the
+// risks of this change stand out.
 func Warnings(old, cur *Policy) (warns []Warning, keptProd []string) {
 	oldG := map[string]Grant{}
 	if old != nil {
@@ -274,27 +279,30 @@ func Warnings(old, cur *Policy) (warns []Warning, keptProd []string) {
 		}
 	}
 	for _, g := range cur.Grants {
+		o, had := oldG[g.Pattern]
+		same := had && sameGrant(o, g)
+		add := func(msg string) { warns = append(warns, Warning{Secret: g.Pattern, Msg: msg, Old: same}) }
 		if g.Approval == ApprovalNone {
-			warns = append(warns, Warning{g.Pattern, "approval none: lệnh trong danh sách nhận secret mà không hỏi ai"})
+			add("approval none: lệnh trong danh sách nhận secret mà không hỏi ai")
 		}
 		if strings.ContainsAny(g.Pattern, "*?") {
-			warns = append(warns, Warning{g.Pattern, "tên có ký tự đại diện (glob): áp cho mọi secret khớp"})
+			add("tên có ký tự đại diện (glob): áp cho mọi secret khớp")
 		}
 		if IsProd(g.Pattern, "") {
-			if o, ok := oldG[g.Pattern]; ok && sameGrant(o, g) {
+			if same {
 				keptProd = append(keptProd, g.Pattern)
 			} else {
-				warns = append(warns, Warning{g.Pattern, "secret PROD, grant mới/sửa trong lần này"})
+				add("secret PROD, grant mới/sửa trong lần này")
 			}
 		}
 		for _, c := range g.AllowCommands {
 			if strings.Contains(c, "**") || strings.Fields(c)[0] == "*" || strings.HasSuffix(c, " *") {
-				warns = append(warns, Warning{g.Pattern, fmt.Sprintf("lệnh %q có wildcard rộng", c)})
+				add(fmt.Sprintf("lệnh %q có wildcard rộng", c))
 			}
 		}
 		for _, e := range g.Entries {
 			if e.UnpinnedScript() {
-				warns = append(warns, Warning{g.Pattern, fmt.Sprintf("allow_commands %q: script không ghim nội dung (sha256): ai sửa được file thì chạy mã tùy ý với secret (kg policy pin <policy.yaml>)", e.Raw)})
+				add(fmt.Sprintf("allow_commands %q: script không ghim nội dung (sha256): ai sửa được file thì chạy mã tùy ý với secret (kg policy pin <policy.yaml>)", e.Raw))
 			}
 		}
 	}

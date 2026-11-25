@@ -28,22 +28,23 @@ type Badge struct {
 	Tone string `json:"tone"`
 }
 
-// Row groups.
+// Row groups. GroupGrant is used by the read-only Policy window (the grants in force).
 const (
 	GroupChange = "change"
 	GroupWarn   = "warn"
-	GroupKept   = "kept"
+	GroupGrant  = "grant"
 )
 
 // ReviewRow is one line of the table; Detail (multi-line) is shown when the row is selected.
 type ReviewRow struct {
 	Group    string `json:"group"`
-	Op       string `json:"op"` // add|mod|del|oracle|warn|kept: picks the icon
+	Op       string `json:"op"` // add|mod|del|oracle|warn|grant: picks the icon
 	Label    string `json:"label"`
 	Secret   string `json:"secret"`
 	Prod     bool   `json:"prod"`
 	What     string `json:"what"`
 	Approval string `json:"approval"`
 	TTL      string `json:"ttl"`
+	When     string `json:"when"` // Policy window: when the grant got its content ("02/01/2006 15:04 (v3)")
 	Detail   string `json:"detail"`
 }

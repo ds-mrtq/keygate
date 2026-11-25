@@ -25,6 +25,11 @@ import (
 // Hello (absolute system powershell.exe, system-only PSModulePath, hidden console). Parameters go
 // into the script as base64 UTF-8; the result is one base64 UTF-8 line on stdout; Cancel = exit 1.
 
+// psBoot is the whole command line: it runs the script sent as the first stdin line.
+const psBoot = `$ErrorActionPreference = 'Stop'
+. ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadLine()))))
+`
+
 const psPrelude = `$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -152,9 +157,148 @@ function IcoLock($il, $key, $hex, $open) {
 }
 `
 
+// psSort: click a column header to sort the table by it (again = reverse), ▲/▼ marks the column.
+// Rows stay inside their group. Dates shown as dd/MM/yyyy or dd/MM sort by date. ApplySort
+// re-applies the current order after a Fill (filter/search) rebuilt the rows.
+const psSort = `function SortKey($t) {
+  if ($t -match '^(\d\d)/(\d\d)/(\d{4})(.*)$') { return $Matches[3] + '-' + $Matches[2] + '-' + $Matches[1] + $Matches[4] }
+  if ($t -match '^(\d\d)/(\d\d)( .*)$') { return $Matches[2] + '-' + $Matches[1] + $Matches[3] }
+  return $t
+}
+function ApplySort($lv) {
+  $s = $lv.Tag
+  if ($null -eq $s -or $lv.Items.Count -lt 2) { return }
+  $rows = New-Object System.Collections.ArrayList
+  $i = 0
+  $dates = $false
+  foreach ($it in $lv.Items) {
+    $k = ''
+    if ($s.col -lt $it.SubItems.Count) { $k = SortKey $it.SubItems[$s.col].Text }
+    $isDate = $k -match '^\d{4}-\d\d-\d\d|^\d\d-\d\d '
+    if ($isDate) { $dates = $true }
+    [void]$rows.Add([pscustomobject]@{ k = $k; d = $isDate; i = $i; it = $it; g = $it.Group; sel = $it.Selected })
+    $i++
+  }
+  # A date column: "chưa dùng", "không rõ" sort before the oldest date, i.e. last when newest first.
+  if ($dates) { foreach ($r in $rows) { if (-not $r.d) { $r.k = '' } } }
+  $sorted = @($rows | Sort-Object -Property @{ Expression = 'k'; Descending = (-not $s.asc) }, @{ Expression = 'i'; Descending = $false })
+  $lv.BeginUpdate()
+  $lv.Items.Clear()
+  foreach ($r in $sorted) {
+    if ($r.g) { $r.it.Group = $r.g }
+    [void]$lv.Items.Add($r.it)
+    if ($r.sel) { $r.it.Selected = $true }
+  }
+  $lv.EndUpdate()
+  if ($lv.SelectedItems.Count -gt 0) { $lv.SelectedItems[0].EnsureVisible() }
+}
+function Sortable($lv) {
+  foreach ($c in $lv.Columns) { $c.Tag = $c.Text }
+  $lv.Add_ColumnClick({
+    param($sender, $e)
+    $s = $sender.Tag
+    if ($s -and $s.col -eq $e.Column) { $s.asc = -not $s.asc } else { $s = @{ col = $e.Column; asc = $true } }
+    $sender.Tag = $s
+    foreach ($c in $sender.Columns) {
+      $c.Text = $c.Tag
+      if ($c.Index -eq $s.col) { if ($s.asc) { $c.Text = $c.Tag + ' ' + [char]0x25B2 } else { $c.Text = $c.Tag + ' ' + [char]0x25BC } }
+    }
+    ApplySort $sender
+  })
+}
+`
+
+// psMain: stdin = base64(JSON mainDoc). The main window: state, session buttons and one tile per
+// window of the tray. Prints the chosen action (see mainActions); Đóng = exit 1.
+const psMain = `$f = NewForm (U '%s') 640 510
+# Shown topmost (a background process cannot take the foreground), then an ordinary window.
+$f.Add_Shown({ $this.TopMost = $false })
+$f.MinimizeBox = $true
+$d = ConvertFrom-Json (U ([Console]::In.ReadToEnd().Trim()))
+function Done($a) { $f.Tag = $a; $f.DialogResult = 'OK' }
+$pic = New-Object System.Windows.Forms.PictureBox
+if ($f.Icon) { $pic.Image = (New-Object System.Drawing.Icon($f.Icon, 48, 48)).ToBitmap() } else { $pic.Image = [System.Drawing.SystemIcons]::Shield.ToBitmap() }
+$pic.SizeMode = 'Zoom'
+$pic.SetBounds(16, 14, 48, 48)
+$hd = Lbl 'KeyGate' 76 10 548 30
+$hd.Font = New-Object System.Drawing.Font('Segoe UI', 15, [System.Drawing.FontStyle]::Bold)
+$sub = Lbl $d.sub 78 42 548 20
+$sub.ForeColor = C '#555555'
+$fl = New-Object System.Windows.Forms.FlowLayoutPanel
+$fl.SetBounds(16, 72, 608, 30)
+$fl.WrapContents = $false
+Badges $fl $d.badges
+$gs = New-Object System.Windows.Forms.GroupBox
+$gs.Text = 'Phiên làm việc'
+$gs.SetBounds(16, 110, 608, 70)
+$start = Btn 'Mở khóa + mở phiên làm việc' 12 26 200
+$end = Btn 'Kết thúc phiên' 218 26 110
+$lock = Btn 'Khóa' 334 26 70
+$pend = Btn 'Không có yêu cầu chờ duyệt' 410 26 186
+$start.Enabled = [bool]$d.start
+$end.Enabled = [bool]$d.end
+$lock.Enabled = [bool]$d.lock
+$pend.Enabled = ($d.pending -gt 0)
+if ($d.pending -gt 0) { $pend.Text = 'Yêu cầu chờ duyệt (' + $d.pending + ')…'; $pend.Font = $bold; $pend.ForeColor = C '#8A5300' }
+$start.Add_Click({ Done 'start' })
+$end.Add_Click({ Done 'end' })
+$lock.Add_Click({ Done 'lock' })
+$pend.Add_Click({ Done 'pending' })
+$gs.Controls.AddRange(@($start, $end, $lock, $pend))
+$il = NewIcons
+IcoLock $il 'secrets' '#3B5BA9' $false
+Ico $il 'add' '#1E7B34' '+'
+Ico $il 'devices' '#6A4BA8' ([string][char]0x260E)
+Ico $il 'log' '#555555' ([string][char]0x2261)
+Ico $il 'policy' '#C77700' ([string][char]0x00A7)
+function Tile($title, $desc, $a, $x, $y) {
+  $b = New-Object System.Windows.Forms.Button
+  $b.Text = $title + [Environment]::NewLine + $desc
+  $b.SetBounds($x, $y, 286, 64)
+  $b.TextAlign = 'MiddleLeft'
+  $b.ImageAlign = 'MiddleLeft'
+  $b.TextImageRelation = 'ImageBeforeText'
+  $b.Padding = New-Object System.Windows.Forms.Padding(10, 0, 6, 0)
+  $b.Image = $il.Images[$a]
+  $b.Tag = $a
+  $b.Add_Click({ Done $this.Tag })
+  return ,$b
+}
+$gm = New-Object System.Windows.Forms.GroupBox
+$gm.Text = 'Quản lý'
+$gm.SetBounds(16, 190, 608, 242)
+$gm.Controls.AddRange(@(
+  (Tile 'Secret…' 'Xem giá trị, sao chép tên, xóa secret' 'secrets' 12 26),
+  (Tile 'Thêm secret…' 'Tên, môi trường, kiểu rồi giá trị (nhập ẩn)' 'add' 310 26),
+  (Tile 'Thiết bị…' 'Ghép điện thoại duyệt, thu hồi thiết bị' 'devices' 12 96),
+  (Tile 'Nhật ký broker' 'Sự kiện của broker: lọc lỗi, tìm kiếm' 'log' 310 96),
+  (Tile 'Policy…' 'Quyền đang áp dụng, cảnh báo, thay đổi chưa áp dụng' 'policy' 12 166)))
+$hint = Lbl 'Bấm chuột trái vào icon KeyGate ở khay hệ thống để mở cửa sổ này, chuột phải để mở menu.' 16 440 608 18
+$hint.ForeColor = C '#777777'
+$refresh = Btn 'Làm mới' 16 468 100
+$quit = Btn 'Thoát broker…' 124 468 130
+$quit.ForeColor = C '#B3261E'
+$close = Btn 'Đóng' 524 468 100
+$close.DialogResult = 'Cancel'
+$refresh.Add_Click({ Done 'refresh' })
+$quit.Add_Click({
+  $msg = 'Thoát KeyGate broker?' + [Environment]::NewLine + [Environment]::NewLine + 'kg run sẽ không lấy được secret và điện thoại không duyệt được yêu cầu cho tới khi chạy lại KeyGate.'
+  $ans = [System.Windows.Forms.MessageBox]::Show($f, $msg, 'KeyGate: thoát', 'YesNo', 'Warning', 'Button2')
+  if ($ans -eq 'Yes') { Done 'quit' }
+})
+$f.CancelButton = $close
+$f.Controls.AddRange(@($pic, $hd, $sub, $fl, $gs, $gm, $hint, $refresh, $quit, $close))
+$f.Add_Shown({ $close.Focus() | Out-Null })
+if ($f.ShowDialog() -ne 'OK') { exit 1 }
+Out64 $f.Tag
+`
+
 // psReviewDoc: stdin = base64(JSON approve.ReviewDoc). Header (who asks, chain, action), colored
 // badges, a grouped table with icons, the selected row's detail; "Xem toàn văn" swaps in the text.
+// Mode 'approve' ends with Tiếp tục (Windows Hello)/Hủy; mode 'view' (the Policy window) is
+// read-only and prints "refresh" or "open", Đóng = exit 1.
 const psReviewDoc = `$f = NewForm (U '%s') 960 620
+$mode = '%s'
 $d = ConvertFrom-Json (U ([Console]::In.ReadToEnd().Trim()))
 $pic = New-Object System.Windows.Forms.PictureBox
 $pic.Image = [System.Drawing.SystemIcons]::Shield.ToBitmap()
@@ -163,6 +307,7 @@ $who = Lbl ($d.requester + ' ' + $d.action) 54 8 894 24
 $who.Font = New-Object System.Drawing.Font('Segoe UI', 11.5, [System.Drawing.FontStyle]::Bold)
 $ct = 'Chạy từ: ' + $d.chain
 if (-not $d.chain) { $ct = 'Chạy từ: không rõ tiến trình cha' }
+if ($mode -eq 'view') { $ct = 'File: ' + $d.chain }
 $ch = Lbl $ct 54 34 894 18
 $ch.ForeColor = C '#444444'
 $note = Lbl $d.note 54 54 894 32
@@ -177,7 +322,7 @@ Ico $il 'mod' '#C77700' ([string][char]0x270E)
 Ico $il 'oracle' '#C77700' ([string][char]0x270E)
 Ico $il 'del' '#B3261E' ([string][char]0x2212)
 Ico $il 'warn' '#B3261E' '!'
-Ico $il 'kept' '#8A8A8A' ([string][char]0x2713)
+Ico $il 'grant' '#3B5BA9' ([string][char]0x2713)
 $lv = New-Object System.Windows.Forms.ListView
 $lv.View = 'Details'
 $lv.FullRowSelect = $true
@@ -185,14 +330,15 @@ $lv.MultiSelect = $false
 $lv.HideSelection = $false
 $lv.SmallImageList = $il
 $lv.SetBounds(12, 130, 936, 300)
-[void]$lv.Columns.Add('Thay đổi', 100)
-[void]$lv.Columns.Add('Secret', 310)
-[void]$lv.Columns.Add('Loại', 60)
-[void]$lv.Columns.Add('Lệnh được nhận secret / nội dung', 240)
-[void]$lv.Columns.Add('Duyệt', 150)
-[void]$lv.Columns.Add('Hết hạn', 72)
+if ($mode -eq 'view') {
+  foreach ($c in @(@('Mục', 90), @('Secret', 265), @('Loại', 50), @('Lệnh được nhận secret / nội dung', 205), @('Duyệt', 105), @('Hết hạn', 70), @('Áp dụng lúc', 125))) { [void]$lv.Columns.Add($c[0], $c[1]) }
+} else {
+  foreach ($c in @(@('Thay đổi', 100), @('Secret', 310), @('Loại', 60), @('Lệnh được nhận secret / nội dung', 240), @('Duyệt', 150), @('Hết hạn', 72))) { [void]$lv.Columns.Add($c[0], $c[1]) }
+}
 $groups = @{}
-foreach ($g in @(@('change', 'Thay đổi'), @('warn', 'Cảnh báo'), @('kept', 'Không đổi, đã duyệt ở bản trước'))) {
+$glabels = @(@('change', 'Thay đổi'), @('warn', 'Cảnh báo'))
+if ($mode -eq 'view') { $glabels = @(@('change', 'Thay đổi trong policy.yaml chưa áp dụng'), @('warn', 'Cảnh báo'), @('grant', 'Quyền đang áp dụng')) }
+foreach ($g in $glabels) {
   $groups[$g[0]] = New-Object System.Windows.Forms.ListViewGroup($g[1], $g[1])
   [void]$lv.Groups.Add($groups[$g[0]])
 }
@@ -206,8 +352,8 @@ foreach ($r in $d.rows) {
   [void]$it.SubItems.Add($r.what)
   [void]$it.SubItems.Add($r.approval)
   [void]$it.SubItems.Add($r.ttl)
+  if ($mode -eq 'view') { [void]$it.SubItems.Add($r.when) }
   if ($r.prod) { $pc.ForeColor = C '#B3261E'; $pc.Font = $bold }
-  if ($r.op -eq 'kept') { foreach ($s in $it.SubItems) { if ($s -ne $pc) { $s.ForeColor = [System.Drawing.Color]::Gray } } }
   if ($r.op -eq 'warn') { $it.SubItems[3].ForeColor = C '#B3261E' }
   $it.Group = $groups[$r.group]
   $it.Tag = $r.detail
@@ -223,6 +369,7 @@ $dt.BackColor = [System.Drawing.Color]::White
 $dt.SetBounds(12, 438, 936, 124)
 $lv.Add_SelectedIndexChanged({ if ($lv.SelectedItems.Count -eq 1) { $dt.Text = $lv.SelectedItems[0].Tag } })
 if ($lv.Items.Count -gt 0) { $lv.Items[0].Selected = $true }
+Sortable $lv
 $full = Btn 'Xem toàn văn' 12 578 140
 $full.Add_Click({
   if ($lv.Visible) {
@@ -238,15 +385,29 @@ $full.Add_Click({
     $full.Text = 'Xem toàn văn'
   }
 })
-$ok = Btn 'Tiếp tục (Windows Hello)' 598 578 210
-$cancel = Btn 'Hủy' 816 578 132
-$ok.DialogResult = 'OK'
-$cancel.DialogResult = 'Cancel'
-$f.AcceptButton = $ok
-$f.CancelButton = $cancel
-$f.Controls.AddRange(@($pic, $who, $ch, $note, $fl, $lv, $dt, $full, $ok, $cancel))
+if ($mode -eq 'view') {
+  function Done($a) { $f.Tag = $a; $f.DialogResult = 'OK' }
+  $refresh = Btn 'Làm mới' 598 578 100
+  $open = Btn 'Mở policy.yaml' 706 578 130
+  $close = Btn 'Đóng' 844 578 104
+  $close.DialogResult = 'Cancel'
+  $refresh.Add_Click({ Done 'refresh' })
+  $open.Add_Click({ Done 'open' })
+  $f.CancelButton = $close
+  $f.Add_Shown({ $this.TopMost = $false })
+  $f.Controls.AddRange(@($pic, $who, $ch, $note, $fl, $lv, $dt, $full, $refresh, $open, $close))
+} else {
+  $ok = Btn 'Tiếp tục (Windows Hello)' 598 578 210
+  $cancel = Btn 'Hủy' 816 578 132
+  $ok.DialogResult = 'OK'
+  $cancel.DialogResult = 'Cancel'
+  $f.AcceptButton = $ok
+  $f.CancelButton = $cancel
+  $f.Controls.AddRange(@($pic, $who, $ch, $note, $fl, $lv, $dt, $full, $ok, $cancel))
+}
 $f.Add_Shown({ $lv.Focus() | Out-Null })
 if ($f.ShowDialog() -ne 'OK') { exit 1 }
+if ($mode -eq 'view') { Out64 $f.Tag }
 `
 
 // psLog: stdin = base64(JSON logDoc). Prints "refresh" or "open"; Đóng = exit 1.
@@ -325,6 +486,7 @@ function Fill {
     [void]$lv.Items.Add($it)
   }
   $lv.EndUpdate()
+  ApplySort $lv
   $dt.Text = ''
   if ($lv.Items.Count -gt 0) { $lv.Items[0].Selected = $true } else { $dt.Text = 'Không có sự kiện nào khớp bộ lọc.' }
 }
@@ -339,6 +501,7 @@ $refresh.Add_Click({ $f.Tag = 'refresh'; $f.DialogResult = 'OK' })
 $open.Add_Click({ $f.Tag = 'open'; $f.DialogResult = 'OK' })
 $f.CancelButton = $close
 $f.Controls.AddRange(@($pic, $hd, $sub, $fl, $flt, $sl, $q, $lv, $dt, $refresh, $open, $close))
+Sortable $lv
 Fill
 $f.Add_Shown({ $lv.Focus() | Out-Null })
 if ($f.ShowDialog() -ne 'OK') { exit 1 }
@@ -446,6 +609,7 @@ function Fill {
     [void]$lv.Items.Add($it)
   }
   $lv.EndUpdate()
+  ApplySort $lv
   Sel
 }
 function Detail($r) {
@@ -508,6 +672,7 @@ $del.Add_Click({
 })
 $f.CancelButton = $close
 $f.Controls.AddRange(@($pic, $hd, $sub, $fl, $flt, $sl, $q, $lv, $dt, $st, $add, $show, $copy, $del, $refresh, $close))
+Sortable $lv
 Fill
 if ($d.select) { foreach ($it in $lv.Items) { if ($it.Tag.key -ceq $d.select) { $it.Selected = $true; $it.EnsureVisible() } } }
 $f.Add_Shown({ $lv.Focus() | Out-Null })
@@ -568,7 +733,7 @@ func Secrets(ctx context.Context, rows []broker.SecretRow, status, tone, sel str
 	if err != nil {
 		return SecretAction{}, err
 	}
-	raw, err := runPS(ctx, psVisual+psSecrets, base64.StdEncoding.EncodeToString(j))
+	raw, err := runPS(ctx, psVisual+psSort+psSecrets, base64.StdEncoding.EncodeToString(j))
 	if err != nil {
 		return SecretAction{}, err
 	}
@@ -672,6 +837,7 @@ foreach ($x in $rows) {
   $it.Tag = $x
   [void]$lv.Items.Add($it)
 }
+Sortable $lv
 $pair = Btn 'Ghép điện thoại…' 12 288 160
 $rev = Btn 'Thu hồi' 180 288 110
 $close = Btn 'Đóng' 1068 288 100
@@ -742,15 +908,22 @@ func runPS(ctx context.Context, script, stdin string) ([]byte, error) {
 	if self, err := os.Executable(); err == nil {
 		icon = fmt.Sprintf("$KgExe = U '%s'\n", b64(self))
 	}
-	cmd := exec.CommandContext(ctx, exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", pshell.Encode(psPrelude+icon+script))
+	// The script goes in as the first stdin line (base64 UTF-8), the caller's stdin after it:
+	// -EncodedCommand doubles the size into UTF-16 and the command line is capped at 32 KiB, which
+	// the larger windows (Secret + sort helper) exceed. Scripts read their data with ReadToEnd.
+	cmd := exec.CommandContext(ctx, exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", pshell.Encode(psBoot))
 	cmd.Env = env
 	pshell.Hide(cmd)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	if stdin != "" {
-		cmd.Stdin = strings.NewReader(stdin)
+	cmd.Stdin = strings.NewReader(b64(psPrelude+icon+script) + "\n" + stdin)
+	err := cmd.Start()
+	if err == nil {
+		done := make(chan struct{})
+		go brandWindows(uint32(cmd.Process.Pid), done)
+		err = cmd.Wait()
+		close(done)
 	}
-	err := cmd.Run()
 	if cerr := ctx.Err(); cerr != nil {
 		return nil, cerr
 	}
@@ -801,6 +974,27 @@ func Review(ctx context.Context, title, text string) error {
 
 // ReviewDoc shows doc as a table (see psReviewDoc) with Continue/Cancel; nil = Continue.
 func ReviewDoc(ctx context.Context, title string, doc approve.ReviewDoc) error {
+	_, err := runReviewDoc(ctx, title, "approve", doc)
+	return err
+}
+
+// PolicyWindowTitle is the caption of the read-only Policy window.
+const PolicyWindowTitle = "KeyGate: policy đang áp dụng"
+
+// PolicyWindow shows the policy overview read-only. action is "refresh" or "open" (open
+// policy.yaml); Đóng returns ErrCanceled.
+func PolicyWindow(ctx context.Context, doc approve.ReviewDoc) (string, error) {
+	raw, err := runReviewDoc(ctx, PolicyWindowTitle, "view", doc)
+	if err != nil {
+		return "", err
+	}
+	if a := string(raw); a == "refresh" || a == "open" {
+		return a, nil
+	}
+	return "", fmt.Errorf("hộp thoại trả thao tác lạ: %q", truncRunes(string(raw), 40))
+}
+
+func runReviewDoc(ctx context.Context, title, mode string, doc approve.ReviewDoc) ([]byte, error) {
 	crlf := func(s string) string { return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\n", "\r\n") }
 	doc.Text = crlf(doc.Text)
 	rows := make([]approve.ReviewRow, len(doc.Rows))
@@ -811,10 +1005,9 @@ func ReviewDoc(ctx context.Context, title string, doc approve.ReviewDoc) error {
 	doc.Rows = rows
 	j, err := json.Marshal(doc)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = runPS(ctx, psVisual+fmt.Sprintf(psReviewDoc, b64(formTitle(title))), base64.StdEncoding.EncodeToString(j))
-	return err
+	return runPS(ctx, psVisual+psSort+fmt.Sprintf(psReviewDoc, b64(formTitle(title)), mode), base64.StdEncoding.EncodeToString(j))
 }
 
 // LogWindow shows broker.log (and the rotated broker.log.1) as a filterable table until closed.
@@ -835,7 +1028,7 @@ func LogWindow(ctx context.Context, path string) error {
 		if err != nil {
 			return err
 		}
-		raw, err := runPS(ctx, psVisual+psLog, base64.StdEncoding.EncodeToString(j))
+		raw, err := runPS(ctx, psVisual+psSort+psLog, base64.StdEncoding.EncodeToString(j))
 		if errors.Is(err, ErrCanceled) {
 			return nil
 		}
@@ -894,7 +1087,7 @@ func Devices(ctx context.Context, rows []DeviceRow) (action, dev string, err err
 	if err != nil {
 		return "", "", err
 	}
-	raw, err := runPS(ctx, psDevices, base64.StdEncoding.EncodeToString(j))
+	raw, err := runPS(ctx, psSort+psDevices, base64.StdEncoding.EncodeToString(j))
 	if err != nil {
 		return "", "", err
 	}
@@ -923,4 +1116,55 @@ func AddSecretMeta(ctx context.Context) (api.SetRequest, error) {
 		return api.SetRequest{}, fmt.Errorf("hộp thoại trả dữ liệu lạ: %w", err)
 	}
 	return r, nil
+}
+
+// MainTitle is the caption of the main window (Tray.OpenMain finds it by this to bring it forward).
+const MainTitle = "KeyGate: bảng điều khiển"
+
+// mainActions are what the main window may print; each maps to one TrayHandlers entry.
+var mainActions = map[string]bool{"start": true, "end": true, "lock": true, "pending": true,
+	"secrets": true, "add": true, "devices": true, "policy": true, "log": true, "refresh": true, "quit": true}
+
+type mainDoc struct {
+	Sub     string          `json:"sub"`
+	Badges  []approve.Badge `json:"badges"`
+	Start   bool            `json:"start"`
+	End     bool            `json:"end"`
+	Lock    bool            `json:"lock"`
+	Pending int             `json:"pending"` // 0 = the button is off
+}
+
+// MainWindow shows the main window for state st and returns the chosen action (a key of
+// mainActions). canApprove = the "Yêu cầu chờ duyệt" action exists. Đóng returns ErrCanceled.
+func MainWindow(ctx context.Context, st broker.UIState, canApprove bool) (string, error) {
+	doc := mainDoc{Sub: "Broker đang chạy trên máy này · trạng thái lúc " + time.Now().Format("15:04:05"),
+		Start: !st.Unlocked || !st.Session, End: st.Session, Lock: st.Unlocked}
+	if st.Unlocked {
+		doc.Badges = append(doc.Badges, approve.Badge{Text: "Đã mở khóa", Tone: approve.ToneAdd})
+	} else {
+		doc.Badges = append(doc.Badges, approve.Badge{Text: "Đang khóa", Tone: approve.ToneMuted})
+	}
+	if st.Session {
+		doc.Badges = append(doc.Badges, approve.Badge{Text: "Phiên làm việc đang mở", Tone: approve.ToneAdd})
+	} else {
+		doc.Badges = append(doc.Badges, approve.Badge{Text: "Chưa mở phiên", Tone: approve.ToneMuted})
+	}
+	if st.Pending > 0 {
+		doc.Badges = append(doc.Badges, approve.Badge{Text: fmt.Sprintf("%d yêu cầu chờ duyệt", st.Pending), Tone: approve.ToneMod})
+		if canApprove {
+			doc.Pending = st.Pending
+		}
+	}
+	j, err := json.Marshal(doc)
+	if err != nil {
+		return "", err
+	}
+	raw, err := runPS(ctx, psVisual+fmt.Sprintf(psMain, b64(MainTitle)), base64.StdEncoding.EncodeToString(j))
+	if err != nil {
+		return "", err
+	}
+	if a := string(raw); mainActions[a] {
+		return a, nil
+	}
+	return "", fmt.Errorf("hộp thoại trả thao tác lạ: %q", truncRunes(string(raw), 40))
 }

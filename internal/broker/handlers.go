@@ -1019,6 +1019,12 @@ func (b *Broker) cmdPolicyApply(ctx context.Context, s *session, w *respWriter, 
 	if err := fsx.WriteAtomic(keptPath, data); err != nil {
 		return err
 	}
+	stampPath := filepath.Join(b.cfg.Home, "state", "policy.times.json")
+	if js, err := json.Marshal(policy.UpdateStamps(policy.ReadStamps(stampPath), base, p, oldVer+1, b.cfg.Now())); err == nil {
+		if err := fsx.WriteAtomic(stampPath, js); err != nil {
+			b.logf("không ghi được giờ áp dụng grant (%v); policy vẫn đã áp dụng", err)
+		}
+	}
 	b.mu.Lock()
 	b.dropVolatileGrants() // session / approval:none grants lapse
 	b.pcache = nil         // resolve programs again with the new policy

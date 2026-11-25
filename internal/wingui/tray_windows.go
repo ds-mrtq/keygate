@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"unicode/utf16"
 	"unsafe"
 
@@ -36,6 +37,10 @@ var (
 	procTrackPopupMenu         = user32.NewProc("TrackPopupMenu")
 	procDestroyMenu            = user32.NewProc("DestroyMenu")
 	procGetCursorPos           = user32.NewProc("GetCursorPos")
+	procSetMenuDefaultItem     = user32.NewProc("SetMenuDefaultItem")
+	procFindWindow             = user32.NewProc("FindWindowW")
+	procShowWindow             = user32.NewProc("ShowWindow")
+	procIsIconic               = user32.NewProc("IsIconic")
 	procCreateIconFromResource = user32.NewProc("CreateIconFromResourceEx")
 	procCreateIconIndirect     = user32.NewProc("CreateIconIndirect")
 	procDestroyIcon            = user32.NewProc("DestroyIcon")
@@ -131,14 +136,16 @@ type iconInfo struct {
 type TrayHandlers struct {
 	State                                                                       func() broker.UIState
 	StartSession, EndSession, Lock, ApprovePending, AddSecret, Secrets, Devices func()
-	OpenLog, Quit                                                               func()
+	Policy, OpenLog, Quit                                                       func()
 }
 
 // Tray is the notification-area icon.
 type Tray struct {
-	h    TrayHandlers
-	hwnd uintptr
-	done chan struct{}
+	h        TrayHandlers
+	ctx      context.Context
+	hwnd     uintptr
+	done     chan struct{}
+	mainOpen atomic.Bool // the main window (or a window it opened) is showing
 
 	mu       sync.Mutex
 	icons    map[string]uintptr
@@ -159,7 +166,7 @@ func RunTray(ctx context.Context, h TrayHandlers) (*Tray, error) {
 	if h.State == nil {
 		return nil, errors.New("tray: thiếu State")
 	}
-	t := &Tray{h: h, done: make(chan struct{}), icons: map[string]uintptr{}}
+	t := &Tray{h: h, ctx: ctx, done: make(chan struct{}), icons: map[string]uintptr{}}
 	ready := make(chan error, 1)
 	go func() {
 		runtime.LockOSThread()
@@ -329,7 +336,44 @@ const (
 	cmdDevices
 	cmdLog
 	cmdQuit
+	cmdMain
+	cmdPolicy
 )
+
+// OpenMain shows the main window and runs the action picked there synchronously (the window it
+// opens replaces it), then shows it again, until the user closes it or quits. A second call while
+// it runs only brings the main window forward.
+func (t *Tray) OpenMain() {
+	if !t.mainOpen.CompareAndSwap(false, true) {
+		title, _ := windows.UTF16PtrFromString(MainTitle)
+		if hw, _, _ := procFindWindow.Call(0, uintptr(unsafe.Pointer(title))); hw != 0 {
+			if ic, _, _ := procIsIconic.Call(hw); ic != 0 {
+				procShowWindow.Call(hw, 9) // SW_RESTORE
+			}
+			procSetForegroundWindow.Call(hw)
+		}
+		return
+	}
+	defer t.mainOpen.Store(false)
+	for {
+		act, err := MainWindow(t.ctx, t.h.State(), t.h.ApprovePending != nil)
+		if err != nil {
+			if !errors.Is(err, ErrCanceled) && t.ctx.Err() == nil {
+				t.Balloon("KeyGate", err.Error())
+			}
+			return
+		}
+		f := map[string]func(){"start": t.h.StartSession, "end": t.h.EndSession, "lock": t.h.Lock,
+			"pending": t.h.ApprovePending, "secrets": t.h.Secrets, "add": t.h.AddSecret,
+			"devices": t.h.Devices, "policy": t.h.Policy, "log": t.h.OpenLog, "quit": t.h.Quit}[act]
+		if f != nil {
+			f()
+		}
+		if act == "quit" || t.ctx.Err() != nil {
+			return
+		}
+	}
+}
 
 func (t *Tray) showMenu() {
 	st := t.h.State()
@@ -340,6 +384,8 @@ func (t *Tray) showMenu() {
 		procAppendMenu.Call(menu, flags, id, uintptr(unsafe.Pointer(p)))
 	}
 	add(mfString|mfGrayed, 1, statusText(st))
+	add(mfString, cmdMain, "Mở cửa sổ KeyGate…")
+	procSetMenuDefaultItem.Call(menu, cmdMain, 0)
 	if st.Pending > 0 && t.h.ApprovePending != nil {
 		add(mfString, cmdPending, fmt.Sprintf("Yêu cầu chờ duyệt (%d)…", st.Pending))
 	}
@@ -356,6 +402,7 @@ func (t *Tray) showMenu() {
 	add(mfString, cmdSecrets, "Secret…")
 	add(mfString, cmdAdd, "Thêm secret…")
 	add(mfString, cmdDevices, "Thiết bị…")
+	add(mfString, cmdPolicy, "Policy…")
 	add(mfString, cmdLog, "Nhật ký broker")
 	add(mfSep, 0, "")
 	add(mfString, cmdQuit, "Thoát")
@@ -380,10 +427,14 @@ func (t *Tray) showMenu() {
 		f = t.h.Secrets
 	case cmdDevices:
 		f = t.h.Devices
+	case cmdPolicy:
+		f = t.h.Policy
 	case cmdLog:
 		f = t.h.OpenLog
 	case cmdQuit:
 		f = t.h.Quit
+	case cmdMain:
+		f = t.OpenMain
 	}
 	if f != nil {
 		go f()
@@ -397,7 +448,10 @@ func trayWndProc(hwnd, m, wparam, lparam uintptr) uintptr {
 	if t != nil {
 		switch {
 		case m == wmTrayCallback:
-			if ev := lparam & 0xFFFF; ev == wmLButtonUp || ev == wmRButtonUp {
+			switch lparam & 0xFFFF {
+			case wmLButtonUp:
+				go t.OpenMain()
+			case wmRButtonUp:
 				t.showMenu()
 			}
 			return 0
