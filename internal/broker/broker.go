@@ -538,6 +538,10 @@ func (b *Broker) Serve(ctx context.Context) error {
 	}
 	b.loadGrants()
 	b.loadMembers()
+	if c, err := net.DialTimeout("unix", sock, time.Second); err == nil { // another broker may have started meanwhile
+		c.Close()
+		return errors.New("broker đã chạy trên " + sock)
+	}
 	os.Remove(sock)
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
