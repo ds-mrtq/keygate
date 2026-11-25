@@ -60,7 +60,7 @@ failed, do not install" notice with the run link at the top of the release
 notes and demotes the release to a prerelease, so `/releases/latest` (what the
 install scripts resolve) skips it; the run stays failed. If "Re-run failed
 jobs" then passes `verify-release`, the notice is removed and the release is
-made latest again.
+no longer a prerelease (latest again unless a newer release exists).
 
 Pull requests that change the workflow, the install scripts or
 `tools/release/`, and runs off `main` or with `dry_run`, are dry runs: the

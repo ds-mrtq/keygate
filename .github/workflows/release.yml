@@ -600,5 +600,9 @@ jobs:
             }' > "$RUNNER_TEMP/notes.md"
           case "$TAG" in
             *-*) gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md" ;;
-            *) gh release edit "$TAG" --prerelease=false --latest --notes-file "$RUNNER_TEMP/notes.md" ;;
+            *)
+              gh release edit "$TAG" --prerelease=false --notes-file "$RUNNER_TEMP/notes.md"
+              # legacy: GitHub picks latest by semver and date, so an older release never displaces a newer one.
+              id=$(gh release view "$TAG" --json databaseId --jq .databaseId)
+              gh api -X PATCH "repos/$GH_REPO/releases/$id" -f make_latest=legacy --silent ;;
           esac
