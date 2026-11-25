@@ -589,7 +589,15 @@ jobs:
           set -euo pipefail
           body=$(gh release view "$TAG" --json body --jq .body)
           case "$body" in *"$CAUTION"*) ;; *) echo 'Not marked.'; exit 0 ;; esac
-          printf '%s\n' "$body" | sed '1,3d' > "$RUNNER_TEMP/notes.md"
+          # Drop only the notice block mark-result added (wherever it is), keep every other line.
+          printf '%s\n' "$body" | awk -v c="$CAUTION" '
+            { line[NR] = $0 }
+            END {
+              for (i = 1; i <= NR; i++) {
+                if (line[i] == "> [!CAUTION]" && index(line[i + 1], c) == 1) { i++; if (line[i + 1] == "") i++; continue }
+                print line[i]
+              }
+            }' > "$RUNNER_TEMP/notes.md"
           case "$TAG" in
             *-*) gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md" ;;
             *) gh release edit "$TAG" --prerelease=false --latest --notes-file "$RUNNER_TEMP/notes.md" ;;
