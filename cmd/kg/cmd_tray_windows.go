@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"keygate/internal/approve"
@@ -22,6 +23,21 @@ import (
 	"keygate/internal/transport/relay"
 	"keygate/internal/wingui"
 )
+
+var procGetConsoleWindow = syscall.NewLazyDLL("kernel32.dll").NewProc("GetConsoleWindow")
+
+// defaultCommand is "tray" when the process has neither a console nor a stderr handle: kgw.exe
+// (built -H=windowsgui) started from Explorer, where usage would go nowhere. kg.exe run by a
+// program without a console still has its stderr pipe, so it keeps printing usage.
+func defaultCommand() string {
+	if h, _, _ := procGetConsoleWindow.Call(); h != 0 {
+		return ""
+	}
+	if h, err := syscall.GetStdHandle(syscall.STD_ERROR_HANDLE); err == nil && h != 0 && h != syscall.InvalidHandle {
+		return ""
+	}
+	return "tray"
+}
 
 const trayLogName = "broker.log"
 const trayLogMax = 1 << 20
