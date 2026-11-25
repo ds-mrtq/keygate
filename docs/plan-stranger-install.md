@@ -239,4 +239,56 @@ flow, English CLI output (unless Q3 is answered differently), any change to the 
 
 ## Results
 
-(Filled in by sub-task 8.)
+Release measured: [v0.1.0](https://github.com/ds-mrtq/keygate/releases/tag/v0.1.0) (commit
+9826a9b5005b, published 2026-11-25 by the Release workflow, not code-signed). Fake values only.
+
+### Linux (D1: met)
+
+Machine: a fresh `ubuntu:24.04` container per run (user `stranger` with `sudo`; no `curl`, no Go,
+no clone, no `~/.keygate`), two terminals as in the README. A Devin session typed the README
+commands (times exclude reading the README; a person reading it for the first time will be slower,
+but the margin to 10:00 is large). Times are wall clock, from `date -u` before each step.
+
+| Step (README) | Budget | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|---|
+| Install curl, install script (download, SHA-256 check, install), `kg version` | 2:00 | 0:28 | 0:17 | 0:17 |
+| `kg init --label laptop` | 2:00 | 0:19 | 0:21 | 0:24 |
+| `kg broker` + unlock, `kg set`, demo script, policy, `kg policy apply` | 3:00 | 0:55 | 0:39 | 0:39 |
+| First `kg run` and `kg audit show` | 2:00 | 0:13 | 0:08 | 0:07 |
+| **Total** | **10:00** | **1:55** | **1:25** | **1:27** |
+
+Every run printed `Checksum OK: kg_v0.1.0_linux_amd64.tar.gz 63de72f3...b360ca3f` (the
+`SHA256SUMS` line), `kg v0.1.0 (commit 9826a9b5005b, linux/amd64)`, then
+`deploying with token [kg:demo/token]`; `kg audit show` listed `policy ... approval=tty-password`
+and `run demo/token ... approval=session exit=0`.
+
+Found and fixed (docs, EN and VI, in this PR):
+
+- A minimal Ubuntu has no `curl`, so the first command fails with `curl: command not found`
+  (run 1 lost a few seconds on it). The quick start now says `sudo apt install curl` first.
+- Terminal 2 does not inherit the `PATH` export from terminal 1: `kg: command not found`. The
+  terminal-2 block now starts with `export PATH="$HOME/.local/bin:$PATH"`.
+
+No product bug found. Not a problem but worth knowing: the CLI prompts are Vietnamese whatever the
+locale; the README's prompt table covers every prompt met in these runs.
+
+### Windows (D2: complete up to the first Windows Hello step)
+
+Machine: a Windows Server 2022 session VM, no Go, no clone, no Windows Hello enrolment (no PIN).
+
+| Step (README) | Budget | Time | Result |
+|---|---|---|---|
+| `install.ps1` (download, SHA-256 check, install), `kg version` | 2:00 | 0:05 | `Checksum OK`, `kg v0.1.0 (commit 9826a9b5005b, windows/amd64)` |
+| Manual check: `SHA256SUMS` line vs `Get-FileHash` | (in above) | 0:21 | Match (`cd797ac2...0673d8c4`) |
+| `kg init --label laptop` | 2:00 | 0:01 | Vault created, paper key printed |
+| `kgw tray`, `kg set`, policy, `kg policy apply` | 3:00 | 0:11 | Stopped: Hello `DeviceNotPresent`, with the hint `ms-settings:signinoptions` (add a PIN) |
+| First `kg run` and `kg audit show` | 2:00 | 0:02 | Stopped at the same Hello error |
+
+- No SmartScreen prompt: `install.ps1` leaves no Mark of the Web on `kgw.exe`. A zip downloaded
+  in a browser was not tested.
+- Vietnamese text shows correctly in the console; it is garbled only when piped in Windows
+  PowerShell 5.1, which the README never does.
+- No README or product bug found.
+
+Still open for D2 (section 5): on a real Windows 11 machine with a PIN or Windows Hello, run the
+tray unlock, `kg set`, `kg policy apply`, the first `kg run` and `kg audit show`, and time them.
