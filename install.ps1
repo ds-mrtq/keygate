@@ -63,6 +63,7 @@ function Install-KeyGate {
         if (-not $env:LOCALAPPDATA) { throw 'kg install: LOCALAPPDATA is not set; pass -InstallDir' }
         $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\KeyGate'
     }
+    $InstallDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($InstallDir)
 
     $archive = "kg_${Version}_windows_${arch}.zip"
     $tmp = Join-Path ([IO.Path]::GetTempPath()) ('kg-install-' + [guid]::NewGuid().ToString('N'))
