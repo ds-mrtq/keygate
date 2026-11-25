@@ -56,6 +56,10 @@ func newApp() (*app, error) {
 }
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version") {
+		// Needs no KG_HOME, so it works before a home directory exists.
+		os.Exit((&app{out: os.Stdout, errw: os.Stderr}).run(os.Args[1:]))
+	}
 	a, err := newApp()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "kg:", err)
@@ -70,7 +74,7 @@ Dùng: kg <lệnh> [tham số]
   init | set | import | delete | list | session start|end | hash | same | cp | run | resolve | grant | reveal
   conflicts | resolve-conflict | sync | fingerprint
   device request|add|revoke | channel add | recover | approve
-  broker | grants [revoke] | tray (Windows: khay hệ thống, dùng kgw.exe) | policy apply|pin | audit verify|show | hook check | mcp | lock | status
+  broker | grants [revoke] | tray (Windows: khay hệ thống, dùng kgw.exe) | policy apply|pin | audit verify|show | hook check | mcp | lock | status | version
 
 Xem docs/CLI.md để biết chi tiết.
 `
@@ -145,6 +149,13 @@ func (a *app) run(args []string) int {
 		err = a.cmdStatus(rest)
 	case "help", "-h", "--help":
 		fmt.Fprint(a.out, usage)
+		return 0
+	case "version", "--version":
+		if len(rest) > 0 {
+			fmt.Fprintln(a.errw, "kg: dùng: kg version")
+			return 2
+		}
+		fmt.Fprintln(a.out, versionLine())
 		return 0
 	default:
 		fmt.Fprintf(a.errw, "kg: lệnh lạ %q\n\n%s", cmd, usage)

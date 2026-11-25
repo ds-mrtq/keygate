@@ -2,12 +2,16 @@ package tty
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -157,5 +161,116 @@ func TestConsoleTerminalEchoRestored(t *testing.T) {
 				t.Fatalf("mode not restored: %+v", got)
 			}
 		})
+	}
+}
+
+// typeAfter types answer on the PTY master once want has been printed on it.
+func typeAfter(t *testing.T, master *os.File, want, answer string) {
+	t.Helper()
+	go func() {
+		var seen []byte
+		buf := make([]byte, 256)
+		for {
+			n, err := master.Read(buf)
+			seen = append(seen, buf[:n]...)
+			if bytes.Contains(seen, []byte(want)) {
+				master.WriteString(answer + "\n")
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+}
+
+func noControllingTerminal() (*os.File, error) { return nil, errors.New("no controlling terminal") }
+
+func TestReadTerminalSecretFromStdinTTY(t *testing.T) {
+	master, slave := openPTY(t)
+	c := NewConsole(slave, slave, slave)
+	c.SetControllingTerminal(noControllingTerminal)
+	typeAfter(t, master, "pw? ", "typed-at-tty")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	got, err := c.ReadTerminalSecret(ctx, "pw? ")
+	if err != nil || got != "typed-at-tty" {
+		t.Fatalf("ReadTerminalSecret = %q, %v; want the line typed at the TTY", got, err)
+	}
+}
+
+func TestReadTerminalSecretRefusesPipeAndFile(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	w.WriteString("from-a-pipe\n")
+	file := filepath.Join(t.TempDir(), "pw.txt")
+	if err := os.WriteFile(file, []byte("from-a-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	for name, in := range map[string]*os.File{"pipe": r, "file": f} {
+		c := NewConsole(in, in, io.Discard)
+		c.SetControllingTerminal(noControllingTerminal)
+		if got, err := c.ReadTerminalSecret(context.Background(), "pw? "); !errors.Is(err, ErrNoTerminal) || got != "" {
+			t.Fatalf("%s: ReadTerminalSecret = %q, %v; want ErrNoTerminal", name, got, err)
+		}
+	}
+}
+
+func TestReadTerminalSecretFromControllingTerminal(t *testing.T) {
+	master, slave := openPTY(t)
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	w.WriteString("from-a-pipe\n")
+	c := NewConsole(r, r, io.Discard)
+	c.SetControllingTerminal(func() (*os.File, error) { return os.OpenFile(slave.Name(), os.O_RDWR|unix.O_NOCTTY, 0) })
+	typeAfter(t, master, "pw? ", "typed-at-ctty")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	got, err := c.ReadTerminalSecret(ctx, "pw? ")
+	if err != nil || got != "typed-at-ctty" {
+		t.Fatalf("ReadTerminalSecret = %q, %v; want the line typed at the controlling terminal, never the pipe", got, err)
+	}
+}
+
+func TestReadTerminalSecretControllingTerminalCancel(t *testing.T) {
+	master, slave := openPTY(t)
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	c := NewConsole(r, r, io.Discard)
+	c.SetControllingTerminal(func() (*os.File, error) { return os.OpenFile(slave.Name(), os.O_RDWR|unix.O_NOCTTY, 0) })
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := c.ReadTerminalSecret(ctx, "pw? "); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ReadTerminalSecret = %v; want the deadline", err)
+	}
+	if m := terminalMode(t, slave); m.Lflag&unix.ECHO == 0 {
+		t.Fatal("echo not restored after a cancelled prompt")
+	}
+	// The expired prompt must not leave a reader behind that takes the next answer.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		master.Write([]byte("next-answer\n"))
+	}()
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel2()
+	if got, err := c.ReadTerminalSecret(ctx2, "pw again? "); err != nil || got != "next-answer" {
+		t.Fatalf("second ReadTerminalSecret = %q, %v; want the next line typed", got, err)
 	}
 }

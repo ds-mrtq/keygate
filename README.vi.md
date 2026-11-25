@@ -119,6 +119,7 @@ kg init --label laptop
 
 # chạy broker: khay trên Windows, foreground ở nơi khác
 kgw tray        # hoặc: kg broker
+# Linux: duyệt bằng mật khẩu thiết bị, chỉ gõ tại terminal của chính broker
 
 # thêm secret, viết policy, áp dụng
 kg set db/test/app --kind oracle-wallet --env test --tns-alias ebs_test --user APP
@@ -148,7 +149,7 @@ Relay và duyệt bằng điện thoại: xem [`relay/README.md`](relay/README.m
 - Giá trị secret chỉ nằm trong RAM của broker và trong môi trường của tiến trình con do broker chạy. Socket giữa CLI và broker chỉ chở tên và argv, không chở giá trị theo cả hai chiều.
 - Relay thấy ID vault, ID thiết bị, kích thước, thời điểm. Relay không đọc được tên hay giá trị secret; sửa dữ liệu trên relay bị phát hiện qua chữ ký, chuỗi `prev`, high-water mark và checkpoint.
 - **Giới hạn đã biết** (chi tiết ở [`docs/DESIGN.md`](docs/DESIGN.md) và [`docs/CLI.md`](docs/CLI.md)): `kg delete` chỉ ẩn secret vì log thiết bị chỉ ghi thêm: thiết bị đã ghép và khóa giấy khôi phục vẫn đọc được giá trị cũ, nên đổi mật khẩu/token thật nếu có thể đã lộ; bộ che không bắt dạng hex, UTF-16, chuỗi đảo, nén, hay giá trị dưới 4 ký tự; còn khe TOCTOU giữa lúc băm script đã ghim và lúc chạy; khôi phục cặp `policy.yaml` + pin cũ trước khi broker khởi động không bị phát hiện; tài khoản Cloudflare phục vụ PWA là một phần gốc tin cậy cho quyền duyệt.
-- Chưa có kiểm toán bảo mật độc lập. Dự án cá nhân, dùng hằng ngày trên Windows 11 + iPhone. Duyệt Touch ID trên macOS chưa kiểm trên máy thật; Linux dùng mật khẩu thiết bị và duyệt `device`.
+- Chưa có kiểm toán bảo mật độc lập. Dự án cá nhân, dùng hằng ngày trên Windows 11 + iPhone. Duyệt Touch ID trên macOS chưa kiểm trên máy thật; trên Linux, duyệt dùng mật khẩu mở khóa thiết bị, chỉ được nhận khi gõ tại terminal tương tác gắn với chính broker (stdin là TTY, hoặc `/dev/tty`). Mật khẩu đến qua pipe, socket, biến môi trường, cờ hay lệnh client đều bị từ chối, và broker chuyển sang duyệt từ thiết bị khác (`approval: device` không đổi).
 
 Phát hiện lỗi bảo mật: mở issue không kèm chi tiết khai thác và đề nghị một kênh riêng.
 

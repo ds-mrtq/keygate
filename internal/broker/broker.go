@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"keygate/internal/allowlist"
@@ -60,6 +61,9 @@ type Config struct {
 	Prompt   Prompter         // broker TTY; default the process stdin/stderr
 	// Password asks for the device unlock password (Linux file backend); default prompts on Prompt.
 	Password devkey.PasswordFunc
+	// CheckPassword verifies a device unlock password typed for an approval on a system without
+	// user-presence; default (Linux file backend) decrypts device.key.enc with it.
+	CheckPassword func(password string) error
 	// Keys opens the device key store; default devkey.Open(Home, ...).
 	Keys     func() (devkey.Store, error)
 	IdleLock time.Duration // 0 = never auto-lock when idle (the default); only a negative value means DefaultIdleLock
@@ -107,6 +111,8 @@ type grantKey struct{ secret, pattern, path, dir string }
 // Broker is the running service.
 type Broker struct {
 	cfg Config
+
+	pwFailures atomic.Int64 // wrong device passwords typed for approvals since start
 
 	mu           sync.Mutex
 	sess         *session
@@ -488,6 +494,9 @@ func (b *Broker) Serve(ctx context.Context) error {
 	id, err := store.LoadIdentity(b.cfg.Home, ks)
 	if err != nil {
 		return fmt.Errorf("nạp khóa thiết bị: %w", err)
+	}
+	if b.cfg.CheckPassword == nil && ks.Name() == "file" {
+		b.cfg.CheckPassword = filePasswordCheck(b.cfg.Home, id.Dev)
 	}
 	b.mu.Lock()
 	b.id, b.started = id, b.cfg.Now()
