@@ -55,10 +55,12 @@ After publishing, `verify-release` downloads the published assets on Linux and
 Windows, requires all six archives to be present and listed, checks them
 against `SHA256SUMS` (`sha256sum -c` on Linux, `Get-FileHash` on Windows), runs
 `gh attestation verify` on every asset, and requires `kg version` of the
-amd64 binary to equal the tag. If it fails, `mark-failed` puts a "Verification
+amd64 binary to equal the tag. If it fails, `mark-result` puts a "Verification
 failed, do not install" notice with the run link at the top of the release
 notes and demotes the release to a prerelease, so `/releases/latest` (what the
-install scripts resolve) skips it; the run stays failed.
+install scripts resolve) skips it; the run stays failed. If "Re-run failed
+jobs" then passes `verify-release`, the notice is removed and the release is
+made latest again.
 
 Pull requests that change the workflow, the install scripts or
 `tools/release/`, and runs off `main` or with `dry_run`, are dry runs: the

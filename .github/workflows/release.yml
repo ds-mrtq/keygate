@@ -556,25 +556,41 @@ jobs:
 
   # A published release that fails verification is marked in its notes and demoted to a prerelease,
   # so /releases/latest (what install.sh and install.ps1 resolve) skips it. The run stays failed.
-  mark-failed:
+  # When a re-run of the failed jobs then passes, the mark is taken off again.
+  mark-result:
     needs: [plan, release, verify-release]
-    if: ${{ always() && needs.release.result == 'success' && needs.verify-release.result != 'success' }}
+    if: ${{ always() && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.version }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      CAUTION: '> **Verification failed.** Do not install this release'
     steps:
       - name: Mark the release as failed
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ needs.plan.outputs.version }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        if: needs.verify-release.result != 'success'
         run: |
           set -euo pipefail
+          body=$(gh release view "$TAG" --json body --jq .body)
+          case "$body" in *"$CAUTION"*) echo 'Already marked.'; exit 0 ;; esac
           {
-            echo "> [!CAUTION]"
-            echo "> **Verification failed.** Do not install this release: the [verify-release check]($RUN_URL) of its published assets failed."
+            echo '> [!CAUTION]'
+            echo "$CAUTION: the [verify-release check]($RUN_URL) of its published assets failed."
             echo
-            gh release view "$TAG" --json body --jq .body
+            printf '%s\n' "$body"
           } > "$RUNNER_TEMP/notes.md"
           gh release edit "$TAG" --prerelease --latest=false --notes-file "$RUNNER_TEMP/notes.md"
+      - name: Unmark the release after a passing re-run
+        if: needs.verify-release.result == 'success'
+        run: |
+          set -euo pipefail
+          body=$(gh release view "$TAG" --json body --jq .body)
+          case "$body" in *"$CAUTION"*) ;; *) echo 'Not marked.'; exit 0 ;; esac
+          printf '%s\n' "$body" | sed '1,3d' > "$RUNNER_TEMP/notes.md"
+          case "$TAG" in
+            *-*) gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md" ;;
+            *) gh release edit "$TAG" --prerelease=false --latest --notes-file "$RUNNER_TEMP/notes.md" ;;
+          esac
