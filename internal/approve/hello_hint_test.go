@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // fakeHelloEnv makes the test binary act as the Windows Hello verifier: it prints the value as the
@@ -77,5 +78,16 @@ func TestHintsOnlyForHello(t *testing.T) {
 	}
 	if h := HelloHint("Unavailable"); h != "" { // Touch ID's word, not a Hello result
 		t.Fatalf("Touch ID result got a Hello hint: %q", h)
+	}
+}
+
+// The tray balloon shows at most 200 runes (wingui showBalloon); a refused start-up unlock must
+// still show the whole hint there.
+func TestHelloHintFitsTrayBalloon(t *testing.T) {
+	for _, res := range []string{"NotConfiguredForUser", "DeviceNotPresent", "DisabledByPolicy", "DeviceBusy", "RetriesExhausted", "Canceled"} {
+		msg := fmt.Sprintf("mở khóa bị từ chối: %v (%s): %s", ErrNotVerified, res, HelloHint(res))
+		if n := utf8.RuneCountInString(msg); n > 200 {
+			t.Errorf("%s: %d runes > 200: %q", res, n, msg)
+		}
 	}
 }

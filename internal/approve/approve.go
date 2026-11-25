@@ -101,12 +101,12 @@ func (h *Hello) Approve(ctx context.Context, prompt string) error {
 // HelloHint returns what the user can do about a UserConsentVerificationResult other than
 // Verified, or "" when there is nothing to add.
 func HelloHint(result string) string {
-	const addPIN = "Settings > Accounts > Sign-in options (Win+R, ms-settings:signinoptions), thêm PIN rồi thử lại"
+	const addPIN = "Win+R, ms-settings:signinoptions (Sign-in options), thêm PIN rồi thử lại"
 	switch result {
 	case "NotConfiguredForUser":
 		return "Windows Hello chưa được thiết lập: " + addPIN
 	case "DeviceNotPresent":
-		return "máy chưa có PIN, vân tay hay khuôn mặt cho Windows Hello: " + addPIN
+		return "máy chưa có PIN/vân tay/khuôn mặt cho Windows Hello: " + addPIN
 	case "DisabledByPolicy":
 		return "Windows Hello bị chính sách máy (Group Policy/MDM) tắt: nhờ quản trị máy bật đăng nhập bằng PIN"
 	case "DeviceBusy":
