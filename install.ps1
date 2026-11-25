@@ -59,6 +59,10 @@ function Install-KeyGate {
     if ($Version -notmatch '^[A-Za-z0-9._-]+$') { throw "kg install: invalid version: $Version" }
     if (-not $BaseUrl) { $BaseUrl = "https://github.com/$repo/releases/download/$Version" }
     $BaseUrl = $BaseUrl.TrimEnd('/', '\')
+    # The checksum comes from the same place as the zip, so the transport must be authenticated.
+    if ($BaseUrl -match '^[A-Za-z][A-Za-z0-9+.-]+://' -and $BaseUrl -notmatch '^https://') {
+        throw "kg install: -BaseUrl must be https:// or a local directory: $BaseUrl"
+    }
     if (-not $InstallDir) {
         if (-not $env:LOCALAPPDATA) { throw 'kg install: LOCALAPPDATA is not set; pass -InstallDir' }
         $InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\KeyGate'

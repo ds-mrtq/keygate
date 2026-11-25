@@ -59,7 +59,7 @@ esac
 if [ -z "$version" ]; then
 	[ -z "$base_url" ] || die "--base-url needs --version"
 	latest="https://github.com/$repo/releases/latest"
-	resolved=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$latest") ||
+	resolved=$(curl -fsSL --proto '=https' --proto-redir '=https' -o /dev/null -w '%{url_effective}' "$latest") ||
 		die "could not reach $latest; pass --version <tag>"
 	case "$resolved" in
 	*/releases/tag/*) version=${resolved##*/releases/tag/} ;;
@@ -72,6 +72,11 @@ esac
 
 [ -n "$base_url" ] || base_url="https://github.com/$repo/releases/download/$version"
 base_url=${base_url%/}
+# The checksum comes from the same place as the archive, so the transport must be authenticated.
+case "$base_url" in
+https://* | file://* | /*) ;;
+*://*) die "--base-url must be https://, file:// or a local directory: $base_url" ;;
+esac
 [ -n "$install_dir" ] || {
 	[ -n "${HOME:-}" ] || die "HOME is not set; pass --dir"
 	install_dir="$HOME/.local/bin"
@@ -86,7 +91,7 @@ fetch() {
 	if [ -d "$base_url" ]; then
 		cp "$base_url/$1" "$tmp/$1" || die "could not copy $base_url/$1"
 	else
-		curl -fsSL --retry 3 -o "$tmp/$1" "$base_url/$1" || die "could not download $base_url/$1"
+		curl -fsSL --proto '=https,file' --proto-redir '=https' --retry 3 -o "$tmp/$1" "$base_url/$1" || die "could not download $base_url/$1"
 	fi
 }
 
