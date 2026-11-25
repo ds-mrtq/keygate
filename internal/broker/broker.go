@@ -507,6 +507,9 @@ func (b *Broker) Serve(ctx context.Context) error {
 	}
 	id, err := store.LoadIdentity(b.cfg.Home, ks)
 	if err != nil {
+		if _, serr := os.Stat(filepath.Join(b.cfg.Home, "device.json")); errors.Is(serr, os.ErrNotExist) {
+			return fmt.Errorf("chưa có vault ở %s: chạy kg init --label <tên máy> trong terminal trước", b.cfg.Home)
+		}
 		return fmt.Errorf("nạp khóa thiết bị: %w", err)
 	}
 	if b.cfg.CheckPassword == nil && ks.Name() == "file" {
