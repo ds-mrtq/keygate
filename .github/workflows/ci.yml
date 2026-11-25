@@ -91,3 +91,18 @@ jobs:
           name: fuzz-crashers
           path: '**/testdata/fuzz/'
           if-no-files-found: ignore
+
+  install-scripts:
+    name: lint install scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck install.sh
+        run: shellcheck --shell=sh install.sh
+      - name: PSScriptAnalyzer install.ps1
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          $findings = Invoke-ScriptAnalyzer -Path ./install.ps1 -Severity Information, Warning, Error
+          if ($findings) { $findings | Format-Table -AutoSize | Out-String -Width 200; exit 1 }
+          'PSScriptAnalyzer: no findings'

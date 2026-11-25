@@ -42,6 +42,34 @@ Download all archives to check the complete manifest (or check only the
 relevant manifest entries). Attestations establish workflow provenance;
 checksums detect corruption. Neither implies native OS signing.
 
+## Install scripts
+
+`install.sh` (Linux amd64/arm64) and `install.ps1` (Windows amd64/arm64) at the
+repository root install a published release for the current user, without
+`sudo` or administrator rights:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ds-mrtq/keygate/main/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/ds-mrtq/keygate/main/install.ps1 | iex
+```
+
+Both resolve the latest release (or take `--version` / `-Version`, env
+`KG_VERSION`), download the archive and `SHA256SUMS`, and exit non-zero
+without installing anything unless the archive's SHA-256 matches its
+`SHA256SUMS` entry. `install.sh` puts `kg` in `~/.local/bin` and prints a PATH
+hint if needed; `install.ps1` puts `kg.exe` and `kgw.exe` in
+`%LOCALAPPDATA%\Programs\KeyGate` and adds it to the user PATH. Both print the
+`gh attestation verify` commands for the downloaded files. `--dir` /
+`-InstallDir` (`KG_INSTALL_DIR`) changes the directory; `--base-url` /
+`-BaseUrl` (`KG_BASE_URL`, a URL or local directory, needs a version) points
+them at other packages. The Release workflow's `verify-install` job uses it to
+install the dry-run packages on Linux (also in a bare `ubuntu:24.04` container
+with only `curl` added) and on Windows (PowerShell 5.1 and 7), and requires a
+copy with one byte of each archive flipped to be refused with no file installed.
+
 ## Optional native signing
 
 Configure repository Actions secrets before pushing the tag:

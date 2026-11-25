@@ -179,13 +179,13 @@ func TestVerifierDecisions(t *testing.T) {
 		{"failure with output", "printf 'Failed\\n'; exit 1", ErrNotVerified},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := runVerifier(context.Background(), 0, "/bin/sh", []string{"-c", tc.script}, nil)
+			err := runVerifier(context.Background(), 0, "/bin/sh", []string{"-c", tc.script}, nil, nil)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("got %v, want %v", err, tc.want)
 			}
 		})
 	}
-	if err := runVerifier(context.Background(), 0, filepath.Join(t.TempDir(), "missing"), nil, nil); err == nil || errors.Is(err, ErrNotVerified) {
+	if err := runVerifier(context.Background(), 0, filepath.Join(t.TempDir(), "missing"), nil, nil, nil); err == nil || errors.Is(err, ErrNotVerified) {
 		t.Fatalf("launch error: %v", err)
 	} else {
 		var launch *exec.Error
@@ -196,10 +196,10 @@ func TestVerifierDecisions(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := runVerifier(ctx, 0, "/bin/sh", []string{"-c", "exit 0"}, nil); !errors.Is(err, context.Canceled) {
+	if err := runVerifier(ctx, 0, "/bin/sh", []string{"-c", "exit 0"}, nil, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel: %v", err)
 	}
-	if err := runVerifier(context.Background(), time.Nanosecond, "/bin/sh", []string{"-c", "exit 0"}, nil); !errors.Is(err, context.DeadlineExceeded) {
+	if err := runVerifier(context.Background(), time.Nanosecond, "/bin/sh", []string{"-c", "exit 0"}, nil, nil); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("timeout: %v", err)
 	}
 }
