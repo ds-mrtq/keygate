@@ -179,6 +179,9 @@ if ($Want -and (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLower() -eq $Want) {
 }
 ```
 
+Nếu Windows PowerShell 5.1 báo không nhận ra `Get-FileHash`, cửa sổ đó được mở từ PowerShell 7
+và thừa hưởng đường dẫn module của nó: chạy `$env:PSModulePath = $null` trong cửa sổ đó rồi thử lại.
+
 Dừng lại nếu nó in `checksum mismatch`: chưa có gì được cài. Lần đầu chạy `kgw.exe`, Windows SmartScreen có thể cảnh báo
 nhà phát hành không rõ vì tệp chưa được ký mã: chọn **More info**, rồi **Run anyway**.
 
@@ -255,7 +258,8 @@ Trên Windows, khóa thiết bị được bảo vệ bằng tài khoản Window
 thiết bị.
 
 Chạy broker khay: chạy `kgw tray`, hoặc nhấp đúp `kgw.exe`. Windows Hello hỏi khuôn mặt, vân tay
-hoặc PIN, và biểu tượng khay chuyển xanh. Sau đó:
+hoặc PIN, và biểu tượng khay chuyển xanh. Sau đó (khối lệnh ghi đè `$HOME\.keygate\policy.yaml`: nếu bạn
+đã dùng KeyGate, hãy chép policy của mình ra chỗ an toàn trước):
 
 ```powershell
 kg set demo/token --kind env --env-name DEMO_TOKEN --env test

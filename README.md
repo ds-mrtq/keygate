@@ -179,6 +179,9 @@ if ($Want -and (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLower() -eq $Want) {
 }
 ```
 
+If Windows PowerShell 5.1 says `Get-FileHash` is not recognized, it was started from PowerShell 7
+and inherited its module path: run `$env:PSModulePath = $null` in that window and try again.
+
 Stop if it prints `checksum mismatch`: nothing was installed. Windows SmartScreen may warn about an unknown publisher the first
 time `kgw.exe` starts, because the binaries are not code-signed: choose **More info**, then
 **Run anyway**.
@@ -258,7 +261,8 @@ it off this machine. On Windows the device key is protected by your Windows acco
 no device password.
 
 Start the tray broker: run `kgw tray`, or double-click `kgw.exe`. Windows Hello asks for your face,
-fingerprint or PIN, and the tray icon turns green. Then:
+fingerprint or PIN, and the tray icon turns green. Then (the block replaces `$HOME\.keygate\policy.yaml`: if you
+already use KeyGate, copy your policy somewhere safe first):
 
 ```powershell
 kg set demo/token --kind env --env-name DEMO_TOKEN --env test
