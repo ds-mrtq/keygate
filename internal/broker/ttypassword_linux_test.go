@@ -116,6 +116,15 @@ func linuxFixture(t *testing.T, console *tty.Console, checks *atomic.Int64) *fix
 	})
 }
 
+// reopen opens the vault again as at start-up, after the fixture locked the broker to write the
+// store directly (put): only the start-up unlock may skip the terminal password.
+func reopen(t *testing.T, f *fixture) {
+	t.Helper()
+	if _, err := f.b.unlockSession(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func ttyConsole(t *testing.T, answers map[string]func(string) string) (*tty.Console, *operator) {
 	master, slave := openPTY(t)
 	op := &operator{answers: answers}
@@ -131,6 +140,7 @@ func TestTTYPasswordApprovesGrant(t *testing.T) {
 	f := linuxFixture(t, c, &checks)
 	f.put("", "ebs/test/a", "test")
 	f.policy(basePolicy, true)
+	reopen(t, f)
 	g, err := f.cli.RequestGrant(context.Background(), "ebs/test/a", sqlArgv, "t")
 	if err != nil || g.Approval != "user-presence" {
 		t.Fatalf("grant with the device password typed at the broker TTY: %+v %v", g, err)
@@ -158,6 +168,7 @@ func TestTTYPasswordWrongIsRefusedAndCounted(t *testing.T) {
 	f := linuxFixture(t, c, &checks)
 	f.put("", "ebs/test/a", "test")
 	f.policy(basePolicy, true)
+	reopen(t, f)
 	for round := 1; round <= 2; round++ {
 		if _, err := f.cli.RequestGrant(context.Background(), "ebs/test/a", sqlArgv, "t"); code(err) != wire.CodeDenied {
 			t.Fatalf("round %d: wrong password must be refused, got %v", round, err)
@@ -197,6 +208,7 @@ func TestTTYPasswordRefusedFromPipe(t *testing.T) {
 	f := linuxFixture(t, c, &checks)
 	f.put("", "ebs/test/a", "test")
 	f.policy(basePolicy, true)
+	reopen(t, f)
 	if _, err := f.cli.RequestGrant(context.Background(), "ebs/test/a", sqlArgv, "t"); err == nil {
 		t.Fatal("a password piped into the broker must not approve")
 	}
@@ -236,6 +248,7 @@ func TestDeviceApprovalIgnoresTTYPassword(t *testing.T) {
 	home = f.home
 	f.put("", "ebs/test/a", "test")
 	f.policy(strings.Replace(basePolicy, "    approval: user-presence\n    ttl: 10m", "    approval: device\n    ttl: 10m", 1), true)
+	reopen(t, f)
 	if _, err := f.cli.RequestGrant(context.Background(), "ebs/test/a", sqlArgv, "t"); err == nil || !strings.Contains(err.Error(), "thiết bị khác máy chạy broker") {
 		t.Fatalf("approval: device must refuse the broker's own device signature, got %v", err)
 	}
@@ -266,10 +279,51 @@ func TestTTYPasswordControllingTerminalShowsOperation(t *testing.T) {
 	f := linuxFixture(t, c, &checks)
 	f.put("", "ebs/test/a", "test")
 	f.policy(basePolicy, true)
+	reopen(t, f)
 	if _, err := f.cli.RequestGrant(context.Background(), "ebs/test/a", sqlArgv, "t"); err != nil {
 		t.Fatalf("grant with the device password typed at /dev/tty: %v", err)
 	}
 	if s := op.text(); !strings.Contains(s, "[KeyGate: cho phép dùng secret ebs/test/a cho lệnh: ") {
 		t.Fatalf("/dev/tty did not show the operation before the password prompt:\n%s", s)
+	}
+}
+
+// After kg lock on Linux the vault reopens only with the device password typed at the broker TTY;
+// the start-up unlock still asks nothing more than the password that loaded the key.
+func TestTTYPasswordReopensLockedVault(t *testing.T) {
+	var checks atomic.Int64
+	c, op := ttyConsole(t, map[string]func(string) string{"Mật khẩu mở khóa thiết bị để duyệt: ": say(goodPw)})
+	f := linuxFixture(t, c, &checks)
+	ctx := context.Background()
+	if checks.Load() != 0 {
+		t.Fatalf("start-up unlock checked the password %d times, want 0", checks.Load())
+	}
+	if err := f.cli.Lock(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.cli.List(ctx); err != nil {
+		t.Fatalf("list after lock with the device password typed at the broker TTY: %v", err)
+	}
+	if checks.Load() != 1 || !strings.Contains(op.text(), "[KeyGate: mở khóa vault KeyGate") {
+		t.Fatalf("checks=%d; broker TTY:\n%s", checks.Load(), op.text())
+	}
+}
+
+func TestTTYPasswordWrongKeepsVaultLocked(t *testing.T) {
+	var checks atomic.Int64
+	c, _ := ttyConsole(t, map[string]func(string) string{"Mật khẩu mở khóa thiết bị để duyệt: ": say("not-the-password")})
+	f := linuxFixture(t, c, &checks)
+	ctx := context.Background()
+	if err := f.cli.Lock(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.cli.List(ctx); err == nil {
+		t.Fatal("list after lock with a wrong device password succeeded")
+	}
+	if st, err := f.cli.Status(ctx); err != nil || st.Unlocked {
+		t.Fatalf("status: unlocked=%v err=%v; want locked", st.Unlocked, err)
+	}
+	if checks.Load() != maxPasswordTries {
+		t.Fatalf("password checks = %d, want %d", checks.Load(), maxPasswordTries)
 	}
 }
