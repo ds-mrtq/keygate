@@ -4,7 +4,7 @@ on:
   push:
     tags: ['v*']
   pull_request:
-    paths: ['.github/workflows/release.yml']
+    paths: ['.github/workflows/release.yml', 'install.sh', 'install.ps1']
   workflow_dispatch:
 
 permissions:
@@ -243,9 +243,106 @@ jobs:
             *) echo "::error::kg version printed '$got', want prefix '$want'"; exit 1 ;;
           esac
 
+  # Install from the packages with install.sh / install.ps1, and check a tampered archive is refused.
+  verify-install:
+    needs: [build, package]
+    name: verify install scripts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-packages
+          path: dist
+      - name: Make a tampered copy (one byte of each archive flipped, SHA256SUMS kept)
+        run: |
+          set -euo pipefail
+          cp -r dist tampered
+          for f in tampered/*.tar.gz tampered/*.zip; do
+            python3 -c 'import sys; p = sys.argv[1]; b = bytearray(open(p, "rb").read()); b[len(b) // 2] ^= 1; open(p, "wb").write(b)' "$f"
+          done
+          ! (cd tampered && sha256sum -c --quiet SHA256SUMS 2>/dev/null)
+      - name: install.sh installs and kg version matches
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sh install.sh --version "$VERSION" --base-url "$PWD/dist" --dir "$RUNNER_TEMP/kg-ok"
+          got=$("$RUNNER_TEMP/kg-ok/kg" version)
+          case "$got" in "kg $VERSION (commit ${GITHUB_SHA:0:12}, linux/amd64)") ;; *) echo "::error::got '$got'"; exit 1 ;; esac
+      - name: install.sh refuses a tampered archive
+        if: runner.os == 'Linux'
+        run: |
+          set -uo pipefail
+          sh install.sh --version "$VERSION" --base-url "$PWD/tampered" --dir "$RUNNER_TEMP/kg-bad" 2>err.txt
+          code=$?
+          cat err.txt
+          if [ "$code" -eq 0 ]; then echo '::error::install.sh exited 0 on a tampered archive'; exit 1; fi
+          grep -q 'checksum mismatch' err.txt
+          if [ -e "$RUNNER_TEMP/kg-bad" ]; then echo '::error::install.sh created files'; ls -la "$RUNNER_TEMP/kg-bad"; exit 1; fi
+      # A bare ubuntu:24.04 image plus curl (tar, sha256sum and the rest are in the base image).
+      - name: install.sh in a bare ubuntu:24.04 container
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          docker run --rm -e VERSION -v "$PWD:/src:ro" ubuntu:24.04 sh -euc '
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends curl >/dev/null
+            if sh /src/install.sh --version "$VERSION" --base-url file:///src/tampered; then
+              echo "tampered archive was installed"; exit 1
+            fi
+            test ! -e "$HOME/.local/bin/kg"
+            sh /src/install.sh --version "$VERSION" --base-url file:///src/dist
+            "$HOME/.local/bin/kg" version | grep -F "kg $VERSION (commit "
+          '
+      - name: install.ps1 (Windows PowerShell 5.1, default directory) installs and adds the user PATH
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & .\install.ps1 -Version $env:VERSION -BaseUrl "$PWD\dist"
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\KeyGate'
+          foreach ($name in 'kg.exe', 'kgw.exe') { if (-not (Test-Path (Join-Path $dir $name))) { throw "$name missing" } }
+          $got = & (Join-Path $dir 'kg.exe') version
+          $want = "kg $env:VERSION (commit $($env:GITHUB_SHA.Substring(0, 12)), windows/amd64)"
+          if ($got -ne $want) { throw "kg version printed '$got', want '$want'" }
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          if (@($userPath -split ';' | Where-Object { $_ -ieq $dir }).Count -ne 1) { throw "user PATH: $userPath" }
+      - name: install.ps1 (pwsh) reinstalls over it without a second PATH entry
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./install.ps1 -Version $env:VERSION -BaseUrl "$PWD\dist"
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\KeyGate'
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          if (@($userPath -split ';' | Where-Object { $_ -ieq $dir }).Count -ne 1) { throw "user PATH: $userPath" }
+          if (Get-ChildItem $dir -Filter '*.old') { throw 'left .old files' }
+      - name: install.ps1 refuses a tampered archive (5.1 and pwsh)
+        if: runner.os == 'Windows'
+        run: |
+          set -uo pipefail
+          for ps in powershell pwsh; do
+            dir="$RUNNER_TEMP/kg-bad-$ps"
+            "$ps" -NoProfile -ExecutionPolicy Bypass -File install.ps1 -Version "$VERSION" -BaseUrl "$PWD/tampered" -InstallDir "$dir" 2>err.txt
+            code=$?
+            cat err.txt
+            if [ "$code" -eq 0 ]; then echo "::error::$ps install.ps1 exited 0 on a tampered archive"; exit 1; fi
+            grep -q 'checksum mismatch' err.txt
+            if [ -e "$dir" ]; then echo "::error::$ps install.ps1 created files"; ls -la "$dir"; exit 1; fi
+          done
+
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    needs: [package, verify-packages]
+    needs: [package, verify-packages, verify-install]
     runs-on: ubuntu-latest
     permissions:
       contents: write
