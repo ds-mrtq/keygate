@@ -54,6 +54,8 @@ func TestStructuredInnerValues(t *testing.T) {
 	const tok = "kgfake-json-token-0123456789"
 	r := New([]Secret{
 		{Name: "j", Value: `{"users":[{"name":"t","user":{"token":"` + tok + `"}}],"server":"https://10.0.0.1:6443"}`},
+		{Name: "q", Value: "users:\n- 'token': kgfake-singlequoted-key\n  \"password\": 'kgfake-it''s-pw'\n"},
+		{Name: "e", Value: `{"token": "kgfake\/escaped\"tok\u0041"}`},
 		{Name: "y", Value: "auth:\n  access-token: 'kgfake-quoted-tok'\n  password=kgfake-ini-pw\n  token: short\n  user: kgfake-not-a-credential\n"},
 	})
 	for in, want := range map[string]string{
@@ -61,6 +63,9 @@ func TestStructuredInnerValues(t *testing.T) {
 		"kgfake-quoted-tok":       "[kg:y]",
 		"pw=kgfake-ini-pw":        "pw=[kg:y]",
 		"https://10.0.0.1:6443":   "https://10.0.0.1:6443",
+		"kgfake-singlequoted-key": "[kg:q]",
+		"kgfake-it's-pw":          "[kg:q]",
+		`kgfake/escaped"tokA`:     "[kg:e]",
 		"short":                   "short",
 		"kgfake-not-a-credential": "kgfake-not-a-credential",
 	} {

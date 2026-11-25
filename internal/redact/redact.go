@@ -4,6 +4,7 @@ package redact
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/url"
 	"regexp"
@@ -35,10 +36,11 @@ type Redactor struct {
 var pctRe = regexp.MustCompile(`%[0-9A-F]{2}`)
 
 // fieldRes match `key: value` / `key=value` lines and `"key": "value"` pairs in a structured
-// secret (kubeconfig, YAML, JSON, INI); group 1 is the key, groups 2-4 the value.
+// secret (kubeconfig, YAML, JSON, INI); group 1 is the key, then the value double-quoted,
+// single-quoted or bare.
 var fieldRes = []*regexp.Regexp{
-	regexp.MustCompile(`(?m)^[ \t]*(?:-[ \t]+)?([A-Za-z0-9_.-]+)[ \t]*[:=][ \t]*(?:"([^"\r\n]*)"|'([^'\r\n]*)'|([^\s"'#,]+))`),
-	regexp.MustCompile(`"([A-Za-z0-9_.-]+)"[ \t]*:[ \t]*(?:"([^"\r\n]*)"|()())`),
+	regexp.MustCompile(`(?m)^[ \t]*(?:-[ \t]+)?["']?([A-Za-z0-9_.-]+)["']?[ \t]*[:=][ \t]*(?:"((?:[^"\\\r\n]|\\.)*)"|'((?:[^'\r\n]|'')*)'|([^\s"'#,]+))`),
+	regexp.MustCompile(`"([A-Za-z0-9_.-]+)"[ \t]*:[ \t]*(?:"((?:[^"\\\r\n]|\\.)*)"|()())`),
 }
 
 // credentialKey reports whether a field name in a structured secret holds a credential.
@@ -64,9 +66,20 @@ func innerValues(v string) []string {
 			if !credentialKey(m[1]) {
 				continue
 			}
-			val := m[2] + m[3] + m[4]
-			if len(val) >= minInterior && val != v {
-				out = append(out, val)
+			vals := []string{m[2] + m[3] + m[4]}
+			if strings.Contains(m[2], `\`) {
+				var u string
+				if json.Unmarshal([]byte(`"`+m[2]+`"`), &u) == nil {
+					vals = append(vals, u)
+				}
+			}
+			if strings.Contains(m[3], "''") {
+				vals = append(vals, strings.ReplaceAll(m[3], "''", "'"))
+			}
+			for _, val := range vals {
+				if len(val) >= minInterior && val != v {
+					out = append(out, val)
+				}
 			}
 		}
 	}
