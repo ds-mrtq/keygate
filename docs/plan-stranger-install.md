@@ -272,9 +272,9 @@ Found and fixed (docs, EN and VI, in this PR):
 No product bug found. Not a problem but worth knowing: the CLI prompts are Vietnamese whatever the
 locale; the README's prompt table covers every prompt met in these runs.
 
-### Windows (D2: complete up to the first Windows Hello step)
+### Windows (D2: met on real Windows 11 with Windows Hello)
 
-Machine: a Windows Server 2022 session VM, no Go, no clone, no Windows Hello enrolment (no PIN).
+**Session run.** Machine: a Windows Server 2022 session VM, no Go, no clone, no Windows Hello enrolment (no PIN).
 
 | Step (README) | Budget | Time | Result |
 |---|---|---|---|
@@ -290,5 +290,25 @@ Machine: a Windows Server 2022 session VM, no Go, no clone, no Windows Hello enr
   PowerShell 5.1, which the README never does.
 - No README or product bug found.
 
-Still open for D2 (section 5): on a real Windows 11 machine with a PIN or Windows Hello, run the
-tray unlock, `kg set`, `kg policy apply`, the first `kg run` and `kg audit show`, and time them.
+**Owner's run (final D2 sign-off, section 5).** Machine: the owner's own Windows 11 laptop with a
+Windows Hello PIN, release v0.1.0, run by the owner's assistant on 2026-11-25 with a separate
+`KG_HOME` and binary folder (the real `~/.keygate` was not touched). Fake values only.
+
+| Step (README) | Budget | Time | Result |
+|---|---|---|---|
+| Manual install: download, `SHA256SUMS` check, `kg version` | 2:00 | 0:08 | Match (`cd797ac2...0673d8c4`), `kg v0.1.0 (commit 9826a9b5005b, windows/amd64)` |
+| `kg init --label laptop` | 2:00 | 0:01 | Vault created, paper key printed |
+| `kgw tray` + Windows Hello PIN | 3:00 | 0:09 | Broker unlocked |
+| `kg set demo/token` | (same) | 0:05 | OK; value given with `--from-file` (fake) instead of the dialog |
+| README policy + `kg policy apply` | (same) | 0:06 | Windows Hello PIN, policy v1 pinned |
+| First `kg run` and `kg audit show` | 2:00 | 0:01 | `deploying with token [kg:demo/token]`, no new approval (session); audit lists session, set, policy, grant, run-start, `run ... exit=0` |
+
+Hands-on total well under 10:00: D2 passes on real Windows 11 with Windows Hello.
+
+Found on this run, now in the README (EN and VI):
+
+- In a Windows PowerShell 5.1 window started from PowerShell 7, the inherited `PSModulePath`
+  hides `Get-FileHash`; clearing it (`$env:PSModulePath = $null`) fixes the manual checksum step.
+  An environment issue, not a README bug; one line under the manual install.
+- The Windows policy step writes `$HOME\.keygate\policy.yaml` from scratch, which would replace an
+  existing user's policy; the step now says to copy it first.
