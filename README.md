@@ -106,31 +106,205 @@ sequenceDiagram
 
 ## Quick start
 
-For release downloads, verification, and signing, see [Releases](docs/RELEASE.md).
+Ten minutes on a clean Ubuntu 24.04 or Windows 11 machine (x86-64 or arm64): install a release,
+check its SHA-256, create a vault, and let one command use a fake secret without seeing it. No Go,
+no clone of this repo, no Cloudflare account, no phone.
 
+The CLI speaks Vietnamese. Every prompt you will meet is listed with what to type in
+[the prompts you will see](#the-prompts-you-will-see).
+
+### 1. Install on Linux
+
+With the script (downloads the newest release and `SHA256SUMS`, refuses to install on a checksum
+mismatch, installs `kg` to `~/.local/bin`, no `sudo`):
+
+<!-- quickstart:linux-install-script -->
 ```bash
-# build
-go build -o kg ./cmd/kg
-go build -ldflags "-H=windowsgui" -o kgw.exe ./cmd/kg     # Windows tray broker
-go test -count=1 -tags kgtest ./...
-
-# create a vault (prints a paper key once: write it down)
-kg init --label laptop
-
-# start the broker: tray on Windows, foreground elsewhere
-kgw tray        # or: kg broker
-# Linux: approvals ask for the device password on the broker's own terminal only
-
-# add secrets, write a policy, apply it
-kg set db/test/app --kind oracle-wallet --env test --tns-alias ebs_test --user APP
-kg import --dotenv .env --prefix myrepo/ --env dev
-kg policy apply
-
-# let the agent use them
-kg run --secret db/test/app -- sql /@ebs_test @D:/repos/x/sql/check.sql
+curl -fsSL https://raw.githubusercontent.com/ds-mrtq/keygate/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+kg version
 ```
 
-A minimal `policy.yaml`:
+Or by hand. Set `VERSION` to the newest tag on the [Releases page](https://github.com/ds-mrtq/keygate/releases),
+and `ARCH` to `arm64` on an ARM machine:
+
+<!-- quickstart:linux-install-manual -->
+```bash
+VERSION=v0.1.0
+ARCH=amd64
+curl -fsSLO "https://github.com/ds-mrtq/keygate/releases/download/$VERSION/kg_${VERSION}_linux_$ARCH.tar.gz"
+curl -fsSLO "https://github.com/ds-mrtq/keygate/releases/download/$VERSION/SHA256SUMS"
+sha256sum -c --ignore-missing SHA256SUMS &&       # must print: kg_..._linux_....tar.gz: OK
+  mkdir -p ~/.local/bin &&
+  tar -xzf "kg_${VERSION}_linux_$ARCH.tar.gz" -C ~/.local/bin kg
+export PATH="$HOME/.local/bin:$PATH"
+kg version                                        # must print: kg <VERSION> (commit ..., linux/...)
+```
+
+If `sha256sum` does not print `OK`, the download is not the published file and nothing is installed. Add the
+`export PATH=...` line to `~/.profile` to keep `kg` on your PATH.
+
+### 2. Install on Windows
+
+In PowerShell, with the script (installs `kg.exe` and `kgw.exe` to
+`%LOCALAPPDATA%\Programs\KeyGate` and adds it to your user PATH, no administrator rights):
+
+<!-- quickstart:windows-install-script -->
+```powershell
+irm https://raw.githubusercontent.com/ds-mrtq/keygate/main/install.ps1 | iex
+kg version
+```
+
+Or by hand (`$Version` is the newest tag on the [Releases page](https://github.com/ds-mrtq/keygate/releases);
+use `arm64` instead of `amd64` on an ARM machine):
+
+<!-- quickstart:windows-install-manual -->
+```powershell
+$Version = 'v0.1.0'
+$Zip = "kg_${Version}_windows_amd64.zip"
+$Base = "https://github.com/ds-mrtq/keygate/releases/download/$Version"
+Invoke-WebRequest "$Base/$Zip" -OutFile $Zip -UseBasicParsing
+Invoke-WebRequest "$Base/SHA256SUMS" -OutFile SHA256SUMS -UseBasicParsing
+$Want = ((Get-Content SHA256SUMS) -match " $Zip$" -split ' ')[0]
+if ($Want -and (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLower() -eq $Want) {
+    $Dir = "$env:LOCALAPPDATA\Programs\KeyGate"
+    Expand-Archive $Zip $Dir -Force
+    [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ";$Dir", 'User')
+    $env:Path += ";$Dir"
+    kg version                                    # must print: kg <Version> (commit ..., windows/...)
+} else {
+    Write-Error "checksum mismatch: $Zip is not the published file"
+}
+```
+
+Stop if it prints `checksum mismatch`: nothing was installed. Windows SmartScreen may warn about an unknown publisher the first
+time `kgw.exe` starts, because the binaries are not code-signed: choose **More info**, then
+**Run anyway**.
+
+To check the build provenance as well, with the [GitHub CLI](https://cli.github.com/):
+`gh attestation verify <archive> --repo ds-mrtq/keygate`. More in [`docs/RELEASE.md`](docs/RELEASE.md).
+
+### 3. First run on Linux
+
+You need two terminals. **Terminal 1** is the broker's own terminal: it holds the vault open and is
+the only place where values and approvals are typed. **Terminal 2** is where you, or later an AI
+agent, run commands.
+
+In terminal 1, create the vault, then start the broker and leave it running:
+
+<!-- quickstart:linux-terminal-1 -->
+```bash
+kg init --label laptop
+kg broker
+```
+
+`kg init` asks for a new master password and a new device unlock password, then prints a **paper
+key** once: write it down and keep it off this machine. `kg broker` asks for the device unlock
+password and prints `[broker] đã mở khóa` (unlocked).
+
+In terminal 2, store a fake secret, write a tiny demo script, pin it in a policy, apply the policy
+and run the script with the secret:
+
+<!-- quickstart:linux-terminal-2 -->
+```bash
+kg set demo/token --kind env --env-name DEMO_TOKEN --env test
+mkdir -p ~/kg-demo
+printf '#!/bin/sh\necho "deploying with token $DEMO_TOKEN"\n' > ~/kg-demo/demo.sh
+cat > ~/.keygate/policy.yaml <<EOF
+grants:
+  demo/token:
+    kind: env
+    allow_commands: ["sh \"path:$HOME/kg-demo/demo.sh\" $(kg hash ~/kg-demo/demo.sh) !exact"]
+    approval: user-presence
+EOF
+kg policy apply
+kg run --secret demo/token -- sh ~/kg-demo/demo.sh
+kg audit show
+```
+
+What happens:
+
+1. `kg set` asks for the value **in terminal 1**. Type any fake value, for example
+   `fake-token-123`. It never goes through terminal 2 or the socket.
+2. `kg policy apply` shows the policy in terminal 1 and asks for the device unlock password
+   there to approve it.
+3. `kg run` needs no new approval: the broker opened a work session when it unlocked. Terminal 2
+   prints `deploying with token [kg:demo/token]`: the script got the value, the output did not.
+4. `kg audit show` asks for the device unlock password in terminal 2 (it opens the audit log
+   itself) and lists every action. The `policy` line ends in `approval=tty-password` (approved at
+   terminal 1); the last line is the run, without the value:
+   `... run       demo/token env=test agent=cli ... approval=session exit=0 | ["sh" "/home/you/kg-demo/demo.sh"]`.
+
+**Linux approval rule.** Linux has no Windows Hello or Touch ID, so an approval is the device
+unlock password typed at an interactive terminal attached to the broker itself (stdin a TTY, or
+`/dev/tty`). A password piped in, or sent through the socket, an environment variable, a flag or
+any client command, is refused, and the broker falls back to approval from another device.
+That is why approvals happen in terminal 1 and never in terminal 2, where an agent runs.
+
+### 4. First run on Windows
+
+In PowerShell:
+
+<!-- quickstart:windows-init -->
+```powershell
+kg init --label laptop
+```
+
+It asks for a new master password twice, then prints a **paper key** once: write it down and keep
+it off this machine. On Windows the device key is protected by your Windows account, so there is
+no device password.
+
+Start the tray broker: run `kgw tray`, or double-click `kgw.exe`. Windows Hello asks for your face,
+fingerprint or PIN, and the tray icon turns green. Then:
+
+```powershell
+kg set demo/token --kind env --env-name DEMO_TOKEN --env test
+New-Item -ItemType Directory -Force "$HOME\kg-demo" | Out-Null
+Set-Content "$HOME\kg-demo\demo.ps1" 'Write-Output "deploying with token $env:DEMO_TOKEN"'
+$Script = "$HOME\kg-demo\demo.ps1" -replace '\\', '/'
+$Hash = kg hash "$HOME\kg-demo\demo.ps1"
+Set-Content "$HOME\.keygate\policy.yaml" -Encoding UTF8 @"
+grants:
+  demo/token:
+    kind: env
+    allow_commands: ["powershell \"path:$Script\" $Hash !exact"]
+    approval: user-presence
+"@
+kg policy apply
+kg run --secret demo/token -- powershell "$HOME\kg-demo\demo.ps1"
+kg audit show
+```
+
+`kg set` opens a KeyGate dialog for the value: type a fake one. `kg policy apply` shows the
+policy and asks Windows Hello. `kg run` prints `deploying with token [kg:demo/token]`, and
+`kg audit show` lists the run. If Windows Hello is not set up, the error says where to turn it
+on: Settings > Accounts > Sign-in options.
+
+### The prompts you will see
+
+| Prompt | Means | Where | What to type |
+|---|---|---|---|
+| `Mật khẩu chủ (>= 12 ký tự):` | Master password, 12+ characters | `kg init` | A new password; with the paper key it is needed for owner operations |
+| `Nhập lại mật khẩu chủ:` | Repeat the master password | `kg init` | The same again |
+| `Mật khẩu mở khóa thiết bị:` | Device unlock password (Linux) | `kg init`, `kg broker`, `kg audit show` | A new password at `kg init`, the same one afterwards |
+| `Nhập lại:` | Repeat | `kg init` (Linux) | The same again |
+| `KHÓA GIẤY` | Paper key, shown once | `kg init` | Nothing: write it down |
+| `[broker] Nhập giá trị cho "demo/token"` | Enter the value for demo/token, hidden | Terminal 1 | The fake value |
+| `Mật khẩu mở khóa thiết bị để duyệt:` | Device unlock password, to approve | Terminal 1 | The device unlock password, after reading the review above it |
+
+Nothing you type at a password prompt is echoed.
+
+### Next steps
+
+- **Your own secrets**: `kg import --dotenv .env --prefix myrepo/ --env dev`, then a grant per
+  secret in `policy.yaml` and `kg policy apply`. Reference: [`docs/CLI.md`](docs/CLI.md).
+- **Agent hooks and MCP**: [`integrations/README.md`](integrations/README.md).
+- **Phone approvals** through your own Cloudflare Worker: [`relay/README.md`](relay/README.md).
+
+### Oracle wallets
+
+A secret of kind `oracle-wallet` is delivered to SQLcl as a temporary wallet. It needs its own
+grant, added to `policy.yaml` next to `demo/token` and applied with `kg policy apply` before `kg run`:
 
 ```yaml
 grants:
@@ -142,7 +316,20 @@ grants:
     max_runtime: 10m
 ```
 
-Relay and phone approvals: see [`relay/README.md`](relay/README.md) (`npx wrangler deploy`, put your vault ID in `ALLOWED_VAULTS`, generate VAPID keys with `node scripts/vapid.mjs`). Agent hooks and MCP: [`integrations/README.md`](integrations/README.md).
+```bash
+kg set db/test/app --kind oracle-wallet --env test --tns-alias ebs_test --user APP
+kg run --secret db/test/app -- sql /@ebs_test @D:/repos/x/sql/check.sql
+```
+
+### Build from source
+
+Needs Go (the version in [`go.mod`](go.mod)).
+
+```bash
+go build -o kg ./cmd/kg
+go build -ldflags "-H=windowsgui" -o kgw.exe ./cmd/kg     # Windows tray broker
+go test -count=1 -tags kgtest ./...
+```
 
 ## Security model
 
