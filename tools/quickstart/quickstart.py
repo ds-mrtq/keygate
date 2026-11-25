@@ -282,7 +282,6 @@ def cmd_windows(args):
     shutil.rmtree(install_dir)
 
     out = ps("windows-install-manual", cwd=tempfile.mkdtemp(prefix="kg-qs-manual-"))
-    expect(out, "True", "checksum comparison")
     expect(out, vline, "kg version")
 
     env["PATH"] = install_dir + os.pathsep + env["PATH"]

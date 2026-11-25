@@ -134,14 +134,14 @@ VERSION=v0.1.0
 ARCH=amd64
 curl -fsSLO "https://github.com/ds-mrtq/keygate/releases/download/$VERSION/kg_${VERSION}_linux_$ARCH.tar.gz"
 curl -fsSLO "https://github.com/ds-mrtq/keygate/releases/download/$VERSION/SHA256SUMS"
-sha256sum -c --ignore-missing SHA256SUMS          # phải in: kg_..._linux_....tar.gz: OK
-mkdir -p ~/.local/bin
-tar -xzf "kg_${VERSION}_linux_$ARCH.tar.gz" -C ~/.local/bin kg
+sha256sum -c --ignore-missing SHA256SUMS &&       # phải in: kg_..._linux_....tar.gz: OK
+  mkdir -p ~/.local/bin &&
+  tar -xzf "kg_${VERSION}_linux_$ARCH.tar.gz" -C ~/.local/bin kg
 export PATH="$HOME/.local/bin:$PATH"
 kg version                                        # phải in: kg <VERSION> (commit ..., linux/...)
 ```
 
-Dừng lại nếu `sha256sum` không in `OK`: tệp tải về không phải tệp đã phát hành. Thêm dòng
+Nếu `sha256sum` không in `OK`, tệp tải về không phải tệp đã phát hành và không có gì được cài. Thêm dòng
 `export PATH=...` vào `~/.profile` để `kg` luôn có trong PATH.
 
 ### 2. Cài trên Windows
@@ -166,15 +166,18 @@ $Base = "https://github.com/ds-mrtq/keygate/releases/download/$Version"
 Invoke-WebRequest "$Base/$Zip" -OutFile $Zip -UseBasicParsing
 Invoke-WebRequest "$Base/SHA256SUMS" -OutFile SHA256SUMS -UseBasicParsing
 $Want = ((Get-Content SHA256SUMS) -match " $Zip$" -split ' ')[0]
-(Get-FileHash $Zip -Algorithm SHA256).Hash.ToLower() -eq $Want   # phải in: True
-$Dir = "$env:LOCALAPPDATA\Programs\KeyGate"
-Expand-Archive $Zip $Dir -Force
-[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ";$Dir", 'User')
-$env:Path += ";$Dir"
-kg version                                        # phải in: kg <Version> (commit ..., windows/...)
+if ($Want -and (Get-FileHash $Zip -Algorithm SHA256).Hash.ToLower() -eq $Want) {
+    $Dir = "$env:LOCALAPPDATA\Programs\KeyGate"
+    Expand-Archive $Zip $Dir -Force
+    [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ";$Dir", 'User')
+    $env:Path += ";$Dir"
+    kg version                                    # phải in: kg <Version> (commit ..., windows/...)
+} else {
+    Write-Error "checksum mismatch: $Zip is not the published file"
+}
 ```
 
-Dừng lại nếu phép kiểm tra in `False`. Lần đầu chạy `kgw.exe`, Windows SmartScreen có thể cảnh báo
+Dừng lại nếu nó in `checksum mismatch`: chưa có gì được cài. Lần đầu chạy `kgw.exe`, Windows SmartScreen có thể cảnh báo
 nhà phát hành không rõ vì tệp chưa được ký mã: chọn **More info**, rồi **Run anyway**.
 
 Để kiểm tra cả nguồn gốc bản build, dùng [GitHub CLI](https://cli.github.com/):
@@ -209,7 +212,7 @@ cat > ~/.keygate/policy.yaml <<EOF
 grants:
   demo/token:
     kind: env
-    allow_commands: ["sh path:$HOME/kg-demo/demo.sh $(kg hash ~/kg-demo/demo.sh) !exact"]
+    allow_commands: ['sh "path:$HOME/kg-demo/demo.sh" $(kg hash ~/kg-demo/demo.sh) !exact']
     approval: user-presence
 EOF
 kg policy apply
@@ -257,11 +260,11 @@ New-Item -ItemType Directory -Force "$HOME\kg-demo" | Out-Null
 Set-Content "$HOME\kg-demo\demo.ps1" 'Write-Output "deploying with token $env:DEMO_TOKEN"'
 $Script = "$HOME\kg-demo\demo.ps1" -replace '\\', '/'
 $Hash = kg hash "$HOME\kg-demo\demo.ps1"
-Set-Content "$HOME\.keygate\policy.yaml" @"
+Set-Content "$HOME\.keygate\policy.yaml" -Encoding UTF8 @"
 grants:
   demo/token:
     kind: env
-    allow_commands: ["powershell path:$Script $Hash !exact"]
+    allow_commands: ['powershell "path:$Script" $Hash !exact']
     approval: user-presence
 "@
 kg policy apply
@@ -297,7 +300,18 @@ Mọi thứ gõ ở lời nhắc mật khẩu đều không hiện ra.
 
 ### Oracle wallet
 
-Secret loại `oracle-wallet` được giao cho SQLcl dưới dạng wallet tạm:
+Secret loại `oracle-wallet` được giao cho SQLcl dưới dạng wallet tạm. Nó cần grant riêng, thêm vào
+`policy.yaml` cạnh `demo/token` và áp dụng bằng `kg policy apply` trước `kg run`:
+
+```yaml
+grants:
+  db/test/*:
+    kind: oracle-wallet
+    tns_alias: ebs_test
+    allow_commands: ["sql /@ebs_test @path:D:/repos/x/sql/**/*.sql"]
+    approval: user-presence
+    max_runtime: 10m
+```
 
 ```bash
 kg set db/test/app --kind oracle-wallet --env test --tns-alias ebs_test --user APP
