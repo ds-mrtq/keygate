@@ -44,6 +44,8 @@ type app struct {
 	brokerCtx context.Context
 	// ready is closed by `kg broker` once the socket is listening (tests); may be nil.
 	ready func()
+	// defaultCmd names the command run without arguments ("" = print usage); nil = usage.
+	defaultCmd func() string
 }
 
 func newApp() (*app, error) {
@@ -52,7 +54,7 @@ func newApp() (*app, error) {
 		return nil, err
 	}
 	return &app{home: home, stdin: os.Stdin, out: os.Stdout, errw: os.Stderr, getenv: os.Getenv,
-		readSecret: tty.ReadSecret, readLine: tty.ReadLine}, nil
+		readSecret: tty.ReadSecret, readLine: tty.ReadLine, defaultCmd: defaultCommand}, nil
 }
 
 func main() {
@@ -80,6 +82,11 @@ Xem docs/CLI.md để biết chi tiết.
 `
 
 func (a *app) run(args []string) int {
+	if len(args) == 0 && a.defaultCmd != nil {
+		if c := a.defaultCmd(); c != "" {
+			args = []string{c}
+		}
+	}
 	if len(args) == 0 {
 		fmt.Fprint(a.errw, usage)
 		return 2
