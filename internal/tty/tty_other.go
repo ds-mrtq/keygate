@@ -3,6 +3,7 @@
 package tty
 
 import (
+	"context"
 	"errors"
 	"os"
 )
@@ -12,3 +13,7 @@ func isTerminal(*os.File) bool { return false }
 func disableEcho(*os.File) (func(), error) {
 	return nil, errors.New("tắt echo không hỗ trợ trên hệ điều hành này")
 }
+
+func openControllingTerminal() (*os.File, error) { return nil, ErrNoTerminal }
+
+func readTerminalLine(context.Context, *os.File) (string, error) { return "", ErrNoTerminal }

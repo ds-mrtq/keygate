@@ -86,7 +86,7 @@ func refused(err error, what string) error {
 
 // apprName is the audit "approval" value for who approved.
 func apprName(by string) string {
-	if strings.HasPrefix(by, "remote:") || strings.HasPrefix(by, "paste:") {
+	if strings.HasPrefix(by, "remote:") || strings.HasPrefix(by, "paste:") || by == byTTYPassword {
 		return by
 	}
 	return policy.ApprovalUserPresence
@@ -233,6 +233,9 @@ func (b *Broker) approveLocal(ctx context.Context, s *session, rq approvalReq) (
 		}
 		if !errors.Is(err, approve.ErrUnsupported) || s == nil {
 			return approvalRes{}, err
+		}
+		if res, ok, err := b.approveByTTYPassword(ctx, prompt); ok {
+			return res, err
 		}
 	}
 	if s == nil {
