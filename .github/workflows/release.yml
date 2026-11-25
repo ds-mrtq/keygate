@@ -3,38 +3,114 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Weekly release: Mondays 02:00 UTC (09:00 +07), skipped when main has nothing new.
+  schedule:
+    - cron: '0 2 * * 1'
   pull_request:
-    paths: ['.github/workflows/release.yml', 'install.sh', 'install.ps1']
+    paths: ['.github/workflows/release.yml', 'install.sh', 'install.ps1', 'tools/release/**']
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and verify only; no tag or release (always the case off main)
+        type: boolean
+        default: false
+      simulate_no_changes:
+        description: Dry run only; tag HEAD in the runner's checkout (never pushed) to exercise the skip path
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# One publishing run at a time, so two runs cannot compute the same next version.
+concurrency:
+  group: release-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
+
 jobs:
-  build:
+  # Decides what this run does: publish a pushed tag, publish the next weekly version, skip because
+  # main has no commits since the last tag, or dry-run (dev-<sha> packages, no tag or release).
+  plan:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.plan.outputs.version }}
+      previous: ${{ steps.plan.outputs.previous }}
+      publish: ${{ steps.plan.outputs.publish }}
+      skip: ${{ steps.plan.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Test version computation and release notes
+        run: sh tools/release/release_test.sh
+      - name: Plan
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          TAG: ${{ github.ref_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          SIMULATE_NO_CHANGES: ${{ inputs.simulate_no_changes }}
+          OFFICIAL: ${{ github.repository == 'ds-mrtq/keygate' }}
+        run: |
+          set -euo pipefail
+          mode=dry-run
+          if [ "$OFFICIAL" = true ]; then
+            case "$EVENT" in
+              push) mode=tag ;;
+              schedule) mode=weekly ;;
+              workflow_dispatch)
+                if [ "$REF" = refs/heads/main ] && [ "$DRY_RUN" != true ] && [ "$SIMULATE_NO_CHANGES" != true ]; then mode=weekly; fi ;;
+            esac
+          fi
+          if [ "$SIMULATE_NO_CHANGES" = true ] && [ "$mode" = dry-run ]; then
+            last=$(sh tools/release/next-version.sh | sed -n 's/^last=//p')
+            git tag -f "${last:-v0.0.0}" HEAD
+            echo "Simulating no changes: ${last:-v0.0.0} moved to HEAD in this checkout only."
+          fi
+          if [ "$mode" = tag ]; then
+            eval "$(sh tools/release/next-version.sh HEAD "$TAG")"
+            version=$TAG previous=$last publish=true skip=false
+          else
+            eval "$(sh tools/release/next-version.sh)"
+            previous=$last
+            # A dry run always builds unless asked to show the skip path.
+            if [ "$mode" = dry-run ] && [ "$SIMULATE_NO_CHANGES" != true ]; then skip=false; fi
+            if [ "$skip" = true ]; then
+              echo "::notice::No commits on $(git rev-parse --short HEAD) since $last; nothing to release."
+              publish=false
+            elif [ "$mode" = weekly ]; then
+              publish=true
+              echo "::notice::Releasing $version ($commits commits since ${last:-the start})."
+            else
+              echo "::notice::Dry run. Next version would be $version ($commits commits since ${last:-the start})."
+              version="dev-${GITHUB_SHA:0:7}" publish=false
+            fi
+          fi
+          {
+            echo "version=$version"
+            echo "previous=$previous"
+            echo "publish=$publish"
+            echo "skip=$skip"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           check-latest: true
-      - name: Version
-        id: version
-        env:
-          IS_TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          version="dev-${GITHUB_SHA:0:7}"
-          if [ "$IS_TAG" = true ]; then version="$TAG"; fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Build raw binaries
         env:
           CGO_ENABLED: '0'
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           ldflags="-s -w -X main.version=$VERSION -X main.commit=$GITHUB_SHA"
@@ -57,7 +133,7 @@ jobs:
           if-no-files-found: error
 
   sign-macos:
-    needs: build
+    needs: [plan, build]
     runs-on: macos-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -65,7 +141,7 @@ jobs:
           name: raw-binaries
           path: raw
       - name: Sign and notarize when Apple credentials are configured
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: needs.plan.outputs.publish == 'true'
         env:
           APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
           APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
@@ -115,7 +191,7 @@ jobs:
           if-no-files-found: error
 
   sign-windows:
-    needs: build
+    needs: [plan, build]
     runs-on: windows-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -123,7 +199,7 @@ jobs:
           name: raw-binaries
           path: raw
       - name: Sign when Windows credentials are configured
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        if: needs.plan.outputs.publish == 'true'
         shell: pwsh
         env:
           WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
@@ -192,7 +268,7 @@ jobs:
               fi
             done
           done
-          (cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS && sha256sum -c SHA256SUMS)
+          (cd dist && sha256sum -- *.tar.gz *.zip > SHA256SUMS && sha256sum -c SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: release-packages
@@ -340,15 +416,21 @@ jobs:
             if [ -e "$dir" ]; then echo "::error::$ps install.ps1 created files"; ls -la "$dir"; exit 1; fi
           done
 
+  # Creates the tag (weekly) and the published release in one step with the workflow's token. A tag
+  # created by GITHUB_TOKEN starts no other workflow run, so this run is the only one for it.
   release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    needs: [package, verify-packages, verify-install]
+    needs: [plan, package, verify-packages, verify-install]
+    if: needs.plan.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
       attestations: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           name: release-packages
@@ -356,18 +438,172 @@ jobs:
       - uses: actions/attest-build-provenance@v3
         with:
           subject-path: 'dist/*'
-      - name: Create draft release
+      - name: Create the published release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.plan.outputs.version }}
+          PREVIOUS: ${{ needs.plan.outputs.previous }}
+          IS_TAG_PUSH: ${{ github.event_name == 'push' }}
         run: |
           set -euo pipefail
-          gh release create "$TAG" dist/* --draft --verify-tag --title "$TAG" --notes 'Release archives and SHA256SUMS have GitHub/Sigstore keyless build provenance.
+          sh tools/release/notes.sh "$TAG" "$PREVIOUS" "$GITHUB_SHA" "$GH_REPO" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+          flags=()
+          if [ "$IS_TAG_PUSH" = true ]; then
+            flags+=(--verify-tag)
+          elif gh api "repos/$GH_REPO/git/ref/tags/$TAG" --silent 2>/dev/null; then
+            echo "::error::tag $TAG already exists"; exit 1
+          else
+            flags+=(--target "$GITHUB_SHA")
+          fi
+          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$TAG" dist/* "${flags[@]}" --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
 
-          Verify each downloaded archive and the checksum manifest:
-          ```sh
-          gh attestation verify <file> --repo ds-mrtq/keygate
-          sha256sum -c SHA256SUMS
-          ```
-          Run attestation verification for SHA256SUMS and each archive you use. Download all archives before checking the full manifest. Native Apple/Windows signing is optional; see docs/RELEASE.md for details.'
+  # Downloads what was published (dry runs: the packages artifact) on Linux and Windows and checks
+  # SHA256SUMS, the build provenance (published releases only) and that kg version equals the tag.
+  verify-release:
+    needs: [plan, package, release]
+    if: ${{ !cancelled() && needs.package.result == 'success' && (needs.release.result == 'success' || needs.plan.outputs.publish != 'true') }}
+    name: verify release (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      attestations: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            archive: linux_amd64.tar.gz
+            binary: kg
+            platform: linux/amd64
+          - os: windows-latest
+            archive: windows_amd64.zip
+            binary: kg.exe
+            platform: windows/amd64
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.version }}
+      PUBLISHED: ${{ needs.plan.outputs.publish }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download the published release
+        if: needs.plan.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --dir rel
+          ls -l rel
+      - name: Use the dry-run packages
+        if: needs.plan.outputs.publish != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: release-packages
+          path: rel
+      - name: Every archive is present and listed in SHA256SUMS
+        run: |
+          set -euo pipefail
+          for os in linux darwin windows; do
+            for arch in amd64 arm64; do
+              ext=tar.gz; [ "$os" = windows ] && ext=zip
+              f="kg_${TAG}_${os}_${arch}.$ext"
+              test -f "rel/$f" || { echo "::error::$f is missing"; exit 1; }
+              grep -qE "^[0-9a-f]{64}  $f\$" rel/SHA256SUMS || { echo "::error::$f is not in SHA256SUMS"; exit 1; }
+            done
+          done
+          test "$(wc -l < rel/SHA256SUMS)" -eq 6
+      - name: sha256sum -c SHA256SUMS
+        if: runner.os == 'Linux'
+        run: cd rel && sha256sum -c SHA256SUMS
+      - name: Get-FileHash matches SHA256SUMS
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($line in Get-Content rel/SHA256SUMS) {
+            $want, $name = $line -split '  ', 2
+            $got = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path rel $name)).Hash.ToLowerInvariant()
+            if ($got -ne $want) { throw "${name}: SHA-256 $got, SHA256SUMS says $want" }
+            "${name}: OK"
+          }
+      - name: gh attestation verify
+        run: |
+          set -euo pipefail
+          if [ "$PUBLISHED" != true ]; then
+            echo 'Dry run: the packages have no attestation; skipped.'
+            exit 0
+          fi
+          for f in rel/*; do gh attestation verify "$f" --repo "$GH_REPO"; done
+      - name: kg version equals the tag
+        env:
+          ARCHIVE: kg_${{ needs.plan.outputs.version }}_${{ matrix.archive }}
+          BINARY: ${{ matrix.binary }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          mkdir unpacked
+          case "$ARCHIVE" in
+            *.zip) unzip -q "rel/$ARCHIVE" -d unpacked ;;
+            *) tar -xzf "rel/$ARCHIVE" -C unpacked ;;
+          esac
+          got=$("unpacked/$BINARY" version)
+          echo "$got"
+          want="kg $TAG (commit ${GITHUB_SHA:0:12}, $PLATFORM)"
+          if [ "$got" != "$want" ]; then echo "::error::kg version printed '$got', want '$want'"; exit 1; fi
+
+  # A published release that fails verification is marked in its notes and demoted to a prerelease,
+  # so /releases/latest (what install.sh and install.ps1 resolve) skips it. The run stays failed.
+  # When a re-run of the failed jobs then passes, the mark is taken off again.
+  mark-result:
+    needs: [plan, release, verify-release]
+    if: ${{ always() && needs.release.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.plan.outputs.version }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      CAUTION: '> **Verification failed.** Do not install this release'
+    steps:
+      - name: Mark the release as failed
+        if: needs.verify-release.result != 'success'
+        run: |
+          set -euo pipefail
+          body=$(gh release view "$TAG" --json body --jq .body)
+          case "$body" in *"$CAUTION"*) echo 'Already marked.'; exit 0 ;; esac
+          {
+            echo '> [!CAUTION]'
+            echo "$CAUTION: the [verify-release check]($RUN_URL) of its published assets failed."
+            echo
+            printf '%s\n' "$body"
+          } > "$RUNNER_TEMP/notes.md"
+          gh release edit "$TAG" --prerelease --latest=false --notes-file "$RUNNER_TEMP/notes.md"
+      - name: Unmark the release after a passing re-run
+        if: needs.verify-release.result == 'success'
+        run: |
+          set -euo pipefail
+          body=$(gh release view "$TAG" --json body --jq .body)
+          case "$body" in *"$CAUTION"*) ;; *) echo 'Not marked.'; exit 0 ;; esac
+          # Drop only the notice block mark-result added (wherever it is), keep every other line.
+          printf '%s\n' "$body" | awk -v c="$CAUTION" '
+            { line[NR] = $0 }
+            END {
+              for (i = 1; i <= NR; i++) {
+                if (line[i] == "> [!CAUTION]" && index(line[i + 1], c) == 1) { i++; if (line[i + 1] == "") i++; continue }
+                print line[i]
+              }
+            }' > "$RUNNER_TEMP/notes.md"
+          case "$TAG" in
+            *-*) gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md" ;;
+            *)
+              # One call, so a failure leaves the notice in place for the next re-run. legacy: GitHub
+              # picks latest by semver and date, so an older release never displaces a newer one.
+              id=$(gh release view "$TAG" --json databaseId --jq .databaseId)
+              gh api -X PATCH "repos/$GH_REPO/releases/$id" -F body=@"$RUNNER_TEMP/notes.md" \
+                -F prerelease=false -f make_latest=legacy --silent ;;
+          esac
