@@ -670,13 +670,15 @@ func TestRemoteLocalFirst(t *testing.T) {
 	}
 }
 
-// (11) reveal never goes to the phone: on a locked screen it fails and nothing is published.
+// (11) reveal never goes to the phone: on a locked screen it fails and nothing is published. The
+// phone is paired, so the error must say the operation is approved only at this machine, not ask to
+// pair one.
 func TestRemoteRevealLocalOnly(t *testing.T) {
 	r := newRemoteFix(t, rcfg{})
 	helperRun(t, r.fixture, "")
 	r.locked.Store(true)
 	err := r.cli.Reveal(context.Background(), "ebs/test/tok")
-	if err == nil || !strings.Contains(err.Error(), "không có kênh duyệt") {
+	if err == nil || !strings.Contains(err.Error(), "không có kênh duyệt") || !strings.Contains(err.Error(), "chỉ duyệt tại máy") || strings.Contains(err.Error(), "kg device pair") {
 		t.Fatalf("reveal: %v", err)
 	}
 	r.noPendingFor(200 * time.Millisecond)

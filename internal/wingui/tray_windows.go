@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unicode/utf16"
 	"unsafe"
 
@@ -150,7 +151,7 @@ type Tray struct {
 	mu       sync.Mutex
 	icons    map[string]uintptr
 	iconPath string // "png" or "bgra": which CreateIcon path worked
-	balloon  [2]string
+	balloons *balloonQueue
 	taskbar  uint32
 }
 
@@ -166,7 +167,7 @@ func RunTray(ctx context.Context, h TrayHandlers) (*Tray, error) {
 	if h.State == nil {
 		return nil, errors.New("tray: thiếu State")
 	}
-	t := &Tray{h: h, ctx: ctx, done: make(chan struct{}), icons: map[string]uintptr{}}
+	t := &Tray{h: h, ctx: ctx, done: make(chan struct{}), icons: map[string]uintptr{}, balloons: newBalloonQueue(balloonGap, time.Now)}
 	ready := make(chan error, 1)
 	go func() {
 		runtime.LockOSThread()
@@ -235,12 +236,20 @@ func (t *Tray) IconPath() string {
 // Refresh re-reads the state and updates icon and tooltip; safe from any goroutine.
 func (t *Tray) Refresh() { procPostMessage.Call(t.hwnd, wmTrayRefresh, 0, 0) }
 
-// Balloon shows a notification balloon; safe from any goroutine.
+// Balloon shows a notification balloon; safe from any goroutine. Balloons are queued and spaced
+// (balloonGap) so one posted right after another is not replaced before it is seen.
 func (t *Tray) Balloon(title, text string) {
-	t.mu.Lock()
-	t.balloon = [2]string{title, text}
-	t.mu.Unlock()
-	procPostMessage.Call(t.hwnd, wmTrayBalloon, 0, 0)
+	if d, sched := t.balloons.add(title, text); sched {
+		t.postBalloon(d)
+	}
+}
+
+func (t *Tray) postBalloon(after time.Duration) {
+	if after <= 0 {
+		procPostMessage.Call(t.hwnd, wmTrayBalloon, 0, 0)
+		return
+	}
+	time.AfterFunc(after, func() { procPostMessage.Call(t.hwnd, wmTrayBalloon, 0, 0) })
 }
 
 func statusText(st broker.UIState) string {
@@ -316,14 +325,18 @@ func (t *Tray) notify(op uintptr) bool {
 }
 
 func (t *Tray) showBalloon() {
-	t.mu.Lock()
-	title, text := t.balloon[0], t.balloon[1]
-	t.mu.Unlock()
+	item, ok, delay, more := t.balloons.next()
+	if !ok {
+		return
+	}
 	nd := notifyIconData{hwnd: t.hwnd, id: 1, flags: nifInfo, infoFlags: 1}
 	nd.size = uint32(unsafe.Sizeof(nd))
-	copyUTF16(nd.infoTitle[:], truncRunes(title, 60))
-	copyUTF16(nd.info[:], truncRunes(text, 200))
+	copyUTF16(nd.infoTitle[:], truncRunes(item[0], 60))
+	copyUTF16(nd.info[:], truncRunes(item[1], 200))
 	procShellNotifyIcon.Call(nimModify, uintptr(unsafe.Pointer(&nd)))
+	if more {
+		t.postBalloon(delay)
+	}
 }
 
 const (

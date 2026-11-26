@@ -62,6 +62,10 @@ type pendingReq struct {
 
 var errNoChannel = errors.New("không có kênh duyệt: màn hình đang khóa và chưa ghép điện thoại (kg device pair)")
 
+// errLocalOnlyLocked: the operation is never offered to the phone (it must be approved at this
+// machine), so a paired phone does not help while the screen is locked.
+var errLocalOnlyLocked = errors.New("không có kênh duyệt: thao tác này chỉ duyệt tại máy (không gửi điện thoại), màn hình đang khóa: mở khóa màn hình rồi chạy lại")
+
 // newPendingErr is the client-facing error of a request that is still open on the phone.
 func newPendingErr(rid string) error {
 	short := rid
@@ -202,6 +206,9 @@ func (b *Broker) humanApprove(ctx context.Context, s *session, rq approvalReq) (
 		return b.approveRemote(ctx, s, rq, key, localOK)
 	case localOK || pasteOK:
 		return b.approveLocal(ctx, s, rq)
+	}
+	if rq.localOnly && rq.mode != policy.ApprovalDevice && b.cfg.ScreenLocked() {
+		return approvalRes{}, errLocalOnlyLocked
 	}
 	return approvalRes{}, errNoChannel
 }
