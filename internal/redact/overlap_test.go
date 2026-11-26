@@ -26,6 +26,12 @@ var overlapCases = []struct {
 		in:      "out: fakeAAAA1234fakeBBBBBBBBBBBB end",
 		leak:    "fakeBBBBBBBBBBBB",
 	},
+	{
+		name:    "longer second match still arriving behind a shorter one",
+		secrets: []Secret{{"a", "fake" + strings.Repeat("A", 22) + "1234"}, {"b", "1234fakeB"}, {"c", "1234fakeB" + strings.Repeat("C", 21)}},
+		in:      "out: fake" + strings.Repeat("A", 22) + "1234fakeB" + strings.Repeat("C", 21) + " end",
+		leak:    strings.Repeat("C", 21),
+	},
 }
 
 func TestOverlappingSecretsBytes(t *testing.T) {

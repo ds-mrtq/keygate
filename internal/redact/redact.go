@@ -126,7 +126,29 @@ func (r *Redactor) Bytes(in []byte) []byte {
 // String redacts a complete string.
 func (r *Redactor) String(s string) string { return string(r.Bytes([]byte(s))) }
 
+// matchAt returns the longest pattern matching buf at i, or nil.
+func (r *Redactor) matchAt(buf []byte, i int) *pattern {
+	for k := range r.pats {
+		p := &r.pats[k]
+		if buf[i] == p.b[0] && bytes.HasPrefix(buf[i:], p.b) {
+			return p
+		}
+	}
+	return nil
+}
+
+// partialAt reports whether buf[i:] is a proper prefix of some pattern (more input could complete it).
+func (r *Redactor) partialAt(buf []byte, i int) bool {
+	for _, p := range r.pats {
+		if len(p.b) > len(buf)-i && bytes.HasPrefix(p.b, buf[i:]) {
+			return true
+		}
+	}
+	return false
+}
+
 // process scans buf; when final is false the last maxLen-1 bytes are left unconsumed.
+// Overlapping matches are masked as one region (the union), so no secret keeps a visible tail.
 // Returns the output appended to dst and the unconsumed remainder.
 func (r *Redactor) process(dst, buf []byte, final bool) ([]byte, []byte) {
 	if len(r.pats) == 0 {
@@ -138,19 +160,34 @@ func (r *Redactor) process(dst, buf []byte, final bool) ([]byte, []byte) {
 	}
 	i := 0
 	for i < limit {
-		matched := false
-		for _, p := range r.pats {
-			if buf[i] == p.b[0] && bytes.HasPrefix(buf[i:], p.b) {
-				dst = append(dst, p.rep...)
-				i += len(p.b)
-				matched = true
-				break
-			}
-		}
-		if !matched {
+		p := r.matchAt(buf, i)
+		if p == nil {
 			dst = append(dst, buf[i])
 			i++
+			continue
 		}
+		end := i + len(p.b)
+		reps := [][]byte{p.rep}
+		complete := true
+		for j := i + 1; j < end; j++ {
+			if !final && len(buf)-j < r.maxLen && r.partialAt(buf, j) {
+				complete = false
+				break
+			}
+			if q := r.matchAt(buf, j); q != nil && j+len(q.b) > end {
+				end = j + len(q.b)
+				if !bytes.Equal(reps[len(reps)-1], q.rep) {
+					reps = append(reps, q.rep)
+				}
+			}
+		}
+		if !complete {
+			break
+		}
+		for _, rep := range reps {
+			dst = append(dst, rep...)
+		}
+		i = end
 	}
 	if i >= len(buf) {
 		return dst, nil
