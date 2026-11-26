@@ -104,7 +104,7 @@ func (a *app) cmdTray(args []string) error {
 		},
 		OnPrompt: func(text string) {
 			if t := tray.Load(); t != nil {
-				t.Balloon("KeyGate cần Windows Hello", text)
+				t.Hint("KeyGate cần Windows Hello", text)
 			}
 		},
 		OnStartupLocked: func(err error) {
