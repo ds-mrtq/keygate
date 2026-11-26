@@ -1030,15 +1030,13 @@ func (b *Broker) cmdPolicyApply(ctx context.Context, s *session, w *respWriter, 
 	b.pcache = nil         // resolve programs again with the new policy
 	b.polMax = oldVer + 1
 	b.mu.Unlock()
-	keep := map[string]bool{}
-	for _, g := range p.Grants {
-		for _, c := range g.AllowCommands {
-			keep[c] = true
-		}
+	env := map[string]string{}
+	for _, r := range vaultSecrets(s) {
+		env[r.Name] = r.Env
 	}
-	b.dropGrantsNotIn(keep) // durable grants of an allow_commands entry the new policy no longer has
+	dropped := b.dropGrantsOnApply(base, p, env)
 	if _, err := b.loadPolicy(s); err == nil {
-		b.logf("policy v%d áp dụng; đã xóa grant tạm và grant của mục allow_commands không còn", oldVer+1)
+		b.logf("policy v%d áp dụng; đã xóa grant tạm và %d grant bền không còn được policy mới bảo đảm (mục allow_commands bỏ, hoặc grant chi phối secret đổi)", oldVer+1, dropped)
 	}
 	b.audBest(s, audit.Entry{Event: audit.EvPolicy, Argv: []string{h, fmt.Sprintf("v%d", oldVer+1)}, Approval: apprName(res.by), Peer: peer})
 	w.ok(wire.PolicyResult{Hash: h, Grants: len(p.Grants)})

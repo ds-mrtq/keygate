@@ -124,12 +124,25 @@ func newFixture(t *testing.T, idle, poll time.Duration) *fixture {
 	return newFixtureWith(t, idle, poll, nil)
 }
 
+// shortTempDir is a fresh directory under os.TempDir with a short name. t.TempDir embeds the test
+// name, and KG_HOME/broker.sock under it can exceed the unix-socket path limit (108 bytes on
+// Windows: "bind: invalid argument") for long test names.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("", "kg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(d) })
+	return d
+}
+
 // newFixtureWith is newFixture with a Config mutator (applied last).
 func newFixtureWith(t *testing.T, idle, poll time.Duration, mod func(*Config)) *fixture {
 	t.Helper()
 	t.Setenv(devkey.EnvBackend, "plain")
 	fakeSQL(t)
-	f := &fixture{t: t, home: t.TempDir(), prompt: &stubPrompt{}}
+	f := &fixture{t: t, home: shortTempDir(t), prompt: &stubPrompt{}}
 	vault := kcrypto.NewVaultID()
 	setup, err := recovery.NewSetup(vault, "pw-pw-pw-pw-pw-pw", lowArgon())
 	if err != nil {
@@ -1272,6 +1285,41 @@ func TestPolicyApplyDropsRemovedAllowCommands(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(f.home, "state", "grants.json"))
 	if strings.Contains(string(data), "HTTEST") {
 		t.Fatalf("grants.json must be rewritten: %s", data)
+	}
+}
+
+// A durable grant was approved for the grant that governed the secret. When the new policy hands
+// the secret to another grant (exact grant removed, falls back to a wildcard with the same command
+// but a ttl), the old approval must not carry over; an unrelated edit keeps it.
+func TestPolicyApplyDropsGrantsWhenGoverningGrantChanges(t *testing.T) {
+	f := newFixture(t, 0, time.Hour)
+	f.put("", "ebs/test/a", "test")
+	ctx := context.Background()
+	exact := basePolicy + "  ebs/test/a:\n    allow_commands: [\"sql /@HTTEST\"]\n    approval: user-presence\n"
+	f.policy(exact, false)
+	if _, err := f.cli.PolicyApply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.cli.RequestGrant(ctx, "ebs/test/a", sqlArgv, "t"); err != nil {
+		t.Fatal(err)
+	}
+	f.policy(exact+"  other/x:\n    allow_commands: [curl]\n", false) // unrelated grant added
+	if _, err := f.cli.PolicyApply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if gv, _ := f.cli.Grants(ctx); len(gv) != 1 {
+		t.Fatalf("an unrelated edit must keep the durable grant: %+v", gv)
+	}
+	f.policy(basePolicy, false) // ebs/test/a now falls back to ebs/test/* (same command, ttl 10m)
+	if _, err := f.cli.PolicyApply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if gv, _ := f.cli.Grants(ctx); len(gv) != 0 {
+		t.Fatalf("grant approved under the removed exact grant must be dropped: %+v", gv)
+	}
+	n := f.approvals.Load()
+	if _, err := f.cli.RequestGrant(ctx, "ebs/test/a", sqlArgv, "t"); err != nil || f.approvals.Load() != n+1 {
+		t.Fatalf("the wildcard grant must be approved anew: %v (approvals %d → %d)", err, n, f.approvals.Load())
 	}
 }
 
