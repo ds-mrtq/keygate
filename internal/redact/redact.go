@@ -119,7 +119,7 @@ func New(secrets []Secret) *Redactor {
 
 // Bytes redacts a complete buffer.
 func (r *Redactor) Bytes(in []byte) []byte {
-	out, _ := r.process(nil, in, true)
+	out, _ := r.process(nil, in, true, &region{})
 	return out
 }
 
@@ -147,10 +147,17 @@ func (r *Redactor) partialAt(buf []byte, i int) bool {
 	return false
 }
 
+// region carries a masked region that is still open at the end of a streamed buffer.
+type region struct {
+	end int    // bytes at the start of the next buffer already inside the region
+	rep []byte // last marker written for the region
+}
+
 // process scans buf; when final is false the last maxLen-1 bytes are left unconsumed.
-// Overlapping matches are masked as one region (the union), so no secret keeps a visible tail.
+// Overlapping matches are masked as one region (the union), so no secret keeps a visible tail;
+// open carries a region across streamed buffers and is updated for the next call.
 // Returns the output appended to dst and the unconsumed remainder.
-func (r *Redactor) process(dst, buf []byte, final bool) ([]byte, []byte) {
+func (r *Redactor) process(dst, buf []byte, final bool, open *region) ([]byte, []byte) {
 	if len(r.pats) == 0 {
 		return append(dst, buf...), nil
 	}
@@ -158,36 +165,33 @@ func (r *Redactor) process(dst, buf []byte, final bool) ([]byte, []byte) {
 	if !final {
 		limit = len(buf) - (r.maxLen - 1)
 	}
-	i := 0
-	for i < limit {
-		p := r.matchAt(buf, i)
-		if p == nil {
-			dst = append(dst, buf[i])
-			i++
-			continue
-		}
-		end := i + len(p.b)
-		reps := [][]byte{p.rep}
-		complete := true
-		for j := i + 1; j < end; j++ {
-			if !final && len(buf)-j < r.maxLen && r.partialAt(buf, j) {
-				complete = false
-				break
+	i, end, last := 0, open.end, open.rep
+	*open = region{}
+	for {
+		for ; i < end; i++ {
+			if !final && len(buf)-i < r.maxLen && r.partialAt(buf, i) {
+				*open = region{end: end - i, rep: last}
+				return dst, buf[i:]
 			}
-			if q := r.matchAt(buf, j); q != nil && j+len(q.b) > end {
-				end = j + len(q.b)
-				if !bytes.Equal(reps[len(reps)-1], q.rep) {
-					reps = append(reps, q.rep)
+			if q := r.matchAt(buf, i); q != nil && i+len(q.b) > end {
+				end = i + len(q.b)
+				if !bytes.Equal(last, q.rep) {
+					dst = append(dst, q.rep...)
+					last = q.rep
 				}
 			}
 		}
-		if !complete {
+		if i >= limit {
 			break
 		}
-		for _, rep := range reps {
-			dst = append(dst, rep...)
+		if p := r.matchAt(buf, i); p != nil {
+			dst = append(dst, p.rep...)
+			last, end = p.rep, i+len(p.b)
+			i++
+			continue
 		}
-		i = end
+		dst = append(dst, buf[i])
+		i++
 	}
 	if i >= len(buf) {
 		return dst, nil
@@ -201,6 +205,7 @@ type Writer struct {
 	r    *Redactor
 	w    io.Writer
 	tail []byte
+	open region
 }
 
 // NewWriter wraps w.
@@ -214,7 +219,7 @@ func (x *Writer) Write(p []byte) (int, error) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	buf := append(x.tail, p...)
-	out, rest := x.r.process(nil, buf, false)
+	out, rest := x.r.process(nil, buf, false, &x.open)
 	x.tail = append([]byte(nil), rest...)
 	if len(out) > 0 {
 		if _, err := x.w.Write(out); err != nil {
@@ -228,7 +233,7 @@ func (x *Writer) Write(p []byte) (int, error) {
 func (x *Writer) Flush() error {
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	out, _ := x.r.process(nil, x.tail, true)
+	out, _ := x.r.process(nil, x.tail, true, &x.open)
 	x.tail = nil
 	if len(out) == 0 {
 		return nil

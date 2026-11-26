@@ -63,3 +63,26 @@ func TestOverlappingSecretsStreaming(t *testing.T) {
 		}
 	}
 }
+
+// A run of self-overlapping matches must keep streaming: the Writer may hold back at most
+// maxLen-1 bytes, and its output must still equal Bytes.
+func TestOverlappingRunStreamsWithBoundedTail(t *testing.T) {
+	r := New([]Secret{{"a", "fake-fake-fake"}})
+	in := []byte(strings.Repeat("fake-", 2000) + "end")
+	var out bytes.Buffer
+	w := r.NewWriter(&out)
+	for i := 0; i < len(in); i += 64 {
+		if _, err := w.Write(in[i:min(i+64, len(in))]); err != nil {
+			t.Fatal(err)
+		}
+		if len(w.tail) >= r.maxLen {
+			t.Fatalf("after %d bytes the Writer holds %d bytes (maxLen %d)", min(i+64, len(in)), len(w.tail), r.maxLen)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if want := r.Bytes(in); !bytes.Equal(out.Bytes(), want) {
+		t.Fatalf("stream %q != bytes %q", out.Bytes(), want)
+	}
+}
