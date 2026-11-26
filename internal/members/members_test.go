@@ -1,7 +1,9 @@
 package members
 
 import (
+	"bytes"
 	"errors"
+	"maps"
 	"testing"
 
 	"keygate/internal/kcrypto"
@@ -108,6 +110,100 @@ func TestRevokeNeedsEpoch(t *testing.T) {
 	ep, _ := New(st.Vault, 4, rev, TypeEpoch, eb, opriv)
 	if _, err := Replay(lines(append(evs, rev, ep))); err != nil {
 		t.Fatalf("revoked sole device + recovery only epoch should be valid: %v", err)
+	}
+}
+
+func TestVaultKeyEnrollmentAndRotation(t *testing.T) {
+	evs, owner, firstPriv, recoveryPriv, firstKey := build(t)
+	st, err := Replay(lines(evs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	holders := st.KeyHolders()
+	if len(holders) != 1 {
+		t.Fatalf("want one initial key holder, got %d", len(holders))
+	}
+	first := holders[0]
+	second := kcrypto.NewDeviceID()
+	secondPriv, secondPub := kcrypto.GenerateX25519()
+	signPub, _ := kcrypto.GenerateSignKey()
+	prev := evs[len(evs)-1]
+	newEvent := func(t *testing.T, typ string, body any) *Event {
+		t.Helper()
+		e, err := New(st.Vault, st.Count, prev, typ, body, owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	apply := func(typ string, body any) {
+		t.Helper()
+		e := newEvent(t, typ, body)
+		if err := st.Apply(e); err != nil {
+			t.Fatalf("apply %s: %v", typ, err)
+		}
+		prev = e
+	}
+	epochBody := func(epoch uint64, key []byte, rcpts ...Recipient) EpochBody {
+		t.Helper()
+		b, err := NewEpochBody(st.Vault, epoch, key, rcpts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	checkKey := func(epoch uint64, rcpt string, priv [32]byte, want []byte) {
+		t.Helper()
+		got, err := st.UnwrapKey(epoch, rcpt, priv)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("wrong key for %s at epoch %d: %v", rcpt, epoch, err)
+		}
+	}
+	checkRejected := func(name string, body EpochBody) {
+		t.Helper()
+		t.Run(name, func(t *testing.T) {
+			count, head, epoch, pending := st.Count, st.Head, st.Epoch, st.PendingEpoch
+			wraps := maps.Clone(st.Wraps[body.Epoch])
+			if err := st.Apply(newEvent(t, TypeEpoch, body)); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("want ErrInvalid, got %v", err)
+			}
+			if st.Count != count || st.Head != head || st.Epoch != epoch || st.PendingEpoch != pending {
+				t.Fatal("rejected event changed the membership state")
+			}
+			if !maps.Equal(st.Wraps[body.Epoch], wraps) {
+				t.Fatal("rejected event changed the available wraps")
+			}
+		})
+	}
+	apply(TypeAdd, AddBody{Dev: second, Label: "second", EdPub: kcrypto.B64(signPub), XPub: kcrypto.B64(secondPub[:])})
+	firstRecipient := Recipient{ID: first.ID, XPub: first.XPub}
+	secondRecipient := Recipient{ID: second, XPub: secondPub}
+	recovery := Recipient{ID: RecoveryRcpt, XPub: st.RecoveryPub}
+	secondKey := kcrypto.NewVaultKey()
+
+	checkRejected("duplicate recipient", epochBody(1, firstKey, secondRecipient, secondRecipient))
+	checkRejected("existing wrap cannot be replaced", epochBody(1, secondKey, secondRecipient, firstRecipient))
+	checkKey(1, first.ID, firstPriv, firstKey)
+	apply(TypeEpoch, epochBody(1, firstKey, secondRecipient))
+	if st.Epoch != 1 || st.PendingEpoch {
+		t.Fatal("enrollment changed the current epoch")
+	}
+	checkKey(1, second, secondPriv, firstKey)
+	checkKey(1, RecoveryRcpt, recoveryPriv, firstKey)
+
+	apply(TypeRevoke, RevokeBody{Dev: first.ID, Reason: "retired"})
+	checkRejected("missing recovery recipient", epochBody(2, secondKey, secondRecipient))
+	checkRejected("missing active recipient", epochBody(2, secondKey, recovery))
+	apply(TypeEpoch, epochBody(2, secondKey, secondRecipient, recovery))
+	if st.Epoch != 2 || st.PendingEpoch {
+		t.Fatal("rotation did not advance the epoch and clear the pending revoke")
+	}
+	checkKey(2, second, secondPriv, secondKey)
+	checkKey(2, RecoveryRcpt, recoveryPriv, secondKey)
+	checkKey(1, second, secondPriv, firstKey)
+	checkRejected("revoked device cannot be enrolled again", epochBody(2, secondKey, firstRecipient))
+	if got, err := st.UnwrapKey(2, first.ID, firstPriv); got != nil || !errors.Is(err, ErrNoWrap) {
+		t.Fatalf("retired device received a new wrap: %v", err)
 	}
 }
 
