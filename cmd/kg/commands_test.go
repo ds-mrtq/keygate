@@ -424,6 +424,91 @@ func TestDeleteBatchCommand(t *testing.T) {
 	}
 }
 
+func TestCopyAndCompareCommands(t *testing.T) {
+	a, _, _ := commandVault(t)
+	st, err := a.openStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []record.Plain{
+		{Name: "src/one", Value: "fake-copy-value-one", Kind: "env", Env: "dev", EnvName: "ORIGINAL_ONE"},
+		{Name: "src/two", Value: "fake-copy-value-two", Kind: "env", Env: "test", EnvName: "ORIGINAL_TWO"},
+	} {
+		if _, err := st.Put("", source); err != nil {
+			st.Close()
+			t.Fatal(err)
+		}
+	}
+	st.Close()
+	var deny atomic.Bool
+	a.approver = approve.Func(func(context.Context, string) error {
+		if deny.Load() {
+			return approve.ErrNotVerified
+		}
+		return nil
+	})
+	a.startBroker(t)
+	a.do(t, "session", "start")
+	status, err := a.client().StatusFull(context.Background())
+	if err != nil || !status.Session {
+		t.Fatalf("copy and comparison must be tested in a live work session: %v", err)
+	}
+
+	checkNoValues := func() {
+		t.Helper()
+		if strings.Contains(a.out.String()+a.errb.String(), "fake-copy-value-") {
+			t.Fatal("CLI exposed a source or copied secret value")
+		}
+	}
+	const override = "COPIED_TOKEN"
+	copyArgs := []string{"cp", "src/one", "dst/one", "src/two", "dst/two", "--env-name", override}
+	before := a.do(t, "fingerprint")
+	deny.Store(true)
+	commandFails(t, a, "bị từ chối", copyArgs...)
+	checkNoValues()
+	commandFails(t, a, "bị từ chối", "same", "src/one", "src/two")
+	checkNoValues()
+	deny.Store(false)
+	commandFails(t, a, "không ghi đè", "cp", "src/one", "dst/one", "src/one", "src/two")
+	commandFails(t, a, `"PATH" bị cấm`, "cp", "src/one", "dst/one", "--env-name", "PATH")
+	if a.do(t, "fingerprint") != before {
+		t.Fatal("refused copies changed the vault")
+	}
+
+	out := a.do(t, copyArgs...)
+	checkNoValues()
+	if !strings.Contains(out, "2 secret: dst/one, dst/two") {
+		t.Fatalf("wrong batch-copy summary: %q", out)
+	}
+	out = a.do(t, "same", "src/one", "dst/one", "dst/two")
+	checkNoValues()
+	if got := strings.Join(strings.Fields(out), " "); got != "same src/one vs dst/one diff src/one vs dst/two" {
+		t.Fatalf("wrong comparison verdicts: %q", out)
+	}
+	out = a.do(t, "same", "src/two", "dst/two")
+	checkNoValues()
+	if got := strings.Join(strings.Fields(out), " "); got != "same src/two vs dst/two" {
+		t.Fatalf("second copy did not match its source: %q", out)
+	}
+
+	a.do(t, "lock")
+	st, err = a.openStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	for _, name := range []string{"dst/one", "dst/two"} {
+		info, err := st.FindByName(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, _, err := st.Get(info.Item)
+		if err != nil || p.EnvName != override {
+			t.Fatalf("%s did not receive the env-name override: %v", name, err)
+		}
+	}
+}
+
 func TestCommandUsage(t *testing.T) {
 	for _, args := range [][]string{{"grant"}, {"grant", "test/item", "--"}, {"grant", "--unknown"}, {"reveal"}, {"reveal", "--unknown"}, {"recover", "--unknown"}, {"device", "revoke"}, {"device", "revoke", "--unknown"}, {"approve", "--unknown"}, {"resolve-conflict"}, {"resolve-conflict", "--unknown"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) { commandFails(t, newTestApp(t, t.TempDir()), "", args...) })
