@@ -96,3 +96,17 @@ func TestKubeconfigDecodedClientKeyMasked(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodedPEMBodyLineMasked: one line of the decoded key printed alone is masked; the PEM
+// armor lines are not secret and stay visible.
+func TestDecodedPEMBodyLineMasked(t *testing.T) {
+	kc := "users:\n- user:\n    client-key-data: " + base64.StdEncoding.EncodeToString([]byte(fakeClientKeyPEM)) + "\n"
+	r := New([]Secret{{Name: "kc", Value: kc}})
+	lines := strings.Split(fakeClientKeyPEM, "\n")
+	if got := r.String(lines[2]); got != "[kg:kc]" {
+		t.Errorf("PEM body line => %q, want [kg:kc]", got)
+	}
+	if got := r.String(lines[0]); got != lines[0] {
+		t.Errorf("PEM armor line masked: %q", got)
+	}
+}
