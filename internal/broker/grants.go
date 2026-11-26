@@ -14,6 +14,7 @@ import (
 	"keygate/internal/broker/wire"
 	"keygate/internal/fsx"
 	"keygate/internal/kcrypto"
+	"keygate/internal/policy"
 )
 
 // grantEntry is one remembered grant. Durable grants follow an explicit human approval of exactly
@@ -247,12 +248,26 @@ func (b *Broker) revokeWhere(match func(grantEntry) bool, peer string) int {
 	return len(gone)
 }
 
-// dropGrantsNotIn removes durable grants whose pattern is not in keep (policy apply).
-func (b *Broker) dropGrantsNotIn(keep map[string]bool) {
+// dropGrantsOnApply removes the durable grants a new policy no longer backs as approved: the
+// allow_commands entry is gone, or the grant that governs the secret (Lookup) is now another one
+// (an exact grant removed so the secret falls back to a wildcard, overlapping wildcards reordered).
+// The latter matters even when the new grant lists the same command: it may differ in ttl, delivery
+// or scope, and the approval was given for the old grant. old is the last applied policy (nil =
+// none verified); env maps vault secret names to their env.
+func (b *Broker) dropGrantsOnApply(old, cur *policy.Policy, env map[string]string) int {
+	keep := map[string]bool{}
+	for _, g := range cur.Grants {
+		for _, c := range g.AllowCommands {
+			keep[c] = true
+		}
+	}
 	b.mu.Lock()
 	n := 0
 	for k, g := range b.grants {
-		if g.Durable && !keep[g.Pattern] {
+		if !g.Durable {
+			continue
+		}
+		if !keep[g.Pattern] || governing(old, g.Secret, env[g.Secret]) != governing(cur, g.Secret, env[g.Secret]) {
 			delete(b.grants, k)
 			n++
 		}
@@ -261,4 +276,17 @@ func (b *Broker) dropGrantsNotIn(keep map[string]bool) {
 	if n > 0 {
 		b.persistGrants()
 	}
+	return n
+}
+
+// governing is the pattern of the grant that decides name under p ("" = none, or denied).
+func governing(p *policy.Policy, name, env string) string {
+	if p == nil {
+		return ""
+	}
+	g, err := p.Lookup(name, env)
+	if err != nil || g == nil {
+		return ""
+	}
+	return g.Pattern
 }
