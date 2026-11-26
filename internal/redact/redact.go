@@ -77,6 +77,9 @@ func innerValues(v string) []string {
 				vals = append(vals, strings.ReplaceAll(m[3], "''", "'"))
 			}
 			for _, val := range vals {
+				vals = append(vals, decodedForms(val)...)
+			}
+			for _, val := range vals {
 				if len(val) >= minInterior && val != v {
 					out = append(out, val)
 				}
@@ -85,6 +88,30 @@ func innerValues(v string) []string {
 	}
 	return out
 }
+
+// decodedForms returns the base64-decoded text of a credential field value (kubeconfig
+// client-key-data holds a base64 PEM key), and, for a PEM, each body line, so the key printed
+// after decoding, whole or in part, is masked too.
+func decodedForms(val string) []string {
+	raw, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(val), ""))
+	if err != nil || len(raw) < minInterior {
+		return nil
+	}
+	dec := string(raw)
+	out := []string{dec}
+	if strings.Contains(dec, "-----BEGIN ") {
+		for _, l := range strings.Split(dec, "\n") {
+			l = strings.TrimSpace(l)
+			if len(l) >= minPEMLine && !strings.HasPrefix(l, "-----") && !strings.Contains(l, ":") {
+				out = append(out, l)
+			}
+		}
+	}
+	return out
+}
+
+// minPEMLine is the shortest PEM body line masked on its own.
+const minPEMLine = 16
 
 // minInterior is the shortest base64 interior fragment that is still matched (avoids noise).
 const minInterior = 8

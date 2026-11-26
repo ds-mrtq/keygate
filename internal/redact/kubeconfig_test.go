@@ -1,6 +1,7 @@
 package redact
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -72,5 +73,52 @@ func TestStructuredInnerValues(t *testing.T) {
 		if got := r.String(in); got != want {
 			t.Errorf("%q => %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Fake, non-functional PEM body (not a real key).
+const fakeClientKeyPEM = "-----BEGIN EC PRIVATE KEY-----\n" +
+	"a2dmYWtlLWNsaWVudC1rZXktbm90LXJlYWwta2dmYWtlLWNsaWVudC1rZXktbm90\n" +
+	"LXJlYWwta2dmYWtlLWNsaWVudC1rZXktbm90LXJlYWw=\n" +
+	"-----END EC PRIVATE KEY-----\n"
+
+// TestKubeconfigDecodedClientKeyMasked: the PEM decoded from an imported kubeconfig's
+// client-key-data (e.g. `base64 -d`) and printed on its own must not reach the output.
+// Intentional red test (security finding): only the base64 forms are patterns today.
+func TestKubeconfigDecodedClientKeyMasked(t *testing.T) {
+	kc := strings.Replace(fakeKubeconfig, "    token: "+fakeKubeToken+"\n",
+		"    client-key-data: "+base64.StdEncoding.EncodeToString([]byte(fakeClientKeyPEM))+"\n", 1)
+	r := New([]Secret{{Name: "k8s/test/kubeconfig", Value: kc}})
+	body := strings.Split(fakeClientKeyPEM, "\n")[1]
+	for _, in := range []string{fakeClientKeyPEM, "key:\n" + fakeClientKeyPEM} {
+		if got := r.String(in); strings.Contains(got, body) {
+			t.Errorf("decoded client-key-data PEM printed unmasked: %q", got)
+		}
+	}
+}
+
+// TestDecodedPEMBodyLineMasked: one line of the decoded key printed alone is masked; the PEM
+// armor lines are not secret and stay visible.
+func TestDecodedPEMBodyLineMasked(t *testing.T) {
+	kc := "users:\n- user:\n    client-key-data: " + base64.StdEncoding.EncodeToString([]byte(fakeClientKeyPEM)) + "\n"
+	r := New([]Secret{{Name: "kc", Value: kc}})
+	lines := strings.Split(fakeClientKeyPEM, "\n")
+	if got := r.String(lines[2]); got != "[kg:kc]" {
+		t.Errorf("PEM body line => %q, want [kg:kc]", got)
+	}
+	if got := r.String(lines[0]); got != lines[0] {
+		t.Errorf("PEM armor line masked: %q", got)
+	}
+}
+
+// TestDecodedClientKeyMaskedJSONWrapped: a JSON kubeconfig whose client-key-data is line-wrapped
+// with escaped newlines is decoded from the unescaped value.
+func TestDecodedClientKeyMaskedJSONWrapped(t *testing.T) {
+	b64 := base64.StdEncoding.EncodeToString([]byte(fakeClientKeyPEM))
+	wrapped := b64[:40] + `\n` + b64[40:]
+	r := New([]Secret{{Name: "kc", Value: `{"users":[{"user":{"client-key-data":"` + wrapped + `"}}]}`}})
+	body := strings.Split(fakeClientKeyPEM, "\n")[1]
+	if got := r.String(fakeClientKeyPEM); strings.Contains(got, body) {
+		t.Errorf("decoded PEM from wrapped JSON client-key-data printed unmasked: %q", got)
 	}
 }
