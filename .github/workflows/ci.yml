@@ -62,7 +62,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # Go 1.27.3 fixes a spurious deadline error when -fuzztime expires (golang/go#75804).
+          go-version: '1.27.3'
           check-latest: true
       # Go runs one fuzz target per invocation; the seed corpora also run in the test job above.
       # A crasher is written to testdata/fuzz/<Target>/ and uploaded below so it can be committed
