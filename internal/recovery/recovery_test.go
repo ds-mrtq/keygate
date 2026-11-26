@@ -2,6 +2,7 @@ package recovery
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"strings"
 	"testing"
 
@@ -9,6 +10,55 @@ import (
 )
 
 var low = kcrypto.Argon2Params{T: 1, M: 64, P: 1}
+
+func TestNewSetupIsRecoverable(t *testing.T) {
+	const vault = "vlt_abcdefghijklmnop"
+	const password = "fake setup password"
+	setup, err := NewSetup(vault, password, low)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(setup.Salt) != 16 || setup.Params != low {
+		t.Fatal("setup did not preserve the salt size and requested Argon2 parameters")
+	}
+	paper, err := ParsePaperKey(setup.PaperKey)
+	if err != nil {
+		t.Fatalf("printed paper key could not be parsed: %v", err)
+	}
+	restored, err := Derive(vault, password, setup.Salt, setup.Params, paper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := []byte("fake membership event")
+	if !ed25519.Verify(setup.Keys.OwnerPub, msg, ed25519.Sign(restored.OwnerPriv, msg)) {
+		t.Fatal("restored signing key does not match the original owner")
+	}
+	vaultKey := bytes.Repeat([]byte{0x41}, 32)
+	wrap, err := kcrypto.WrapKey(vault, 1, "recovery", setup.Keys.RecoveryPub, vaultKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := kcrypto.UnwrapKey(vault, 1, wrap, restored.RecoveryPriv); err != nil || !bytes.Equal(got, vaultKey) {
+		t.Fatalf("restored recovery key could not unwrap the vault key: %v", err)
+	}
+
+	other, err := NewSetup(vault, password, low)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(setup.Salt, other.Salt) || setup.PaperKey == other.PaperKey {
+		t.Fatal("separate setups reused the salt or paper key")
+	}
+}
+
+func TestNewSetupRejectsInvalidParams(t *testing.T) {
+	params := low
+	params.M = 1
+	got, err := NewSetup("vlt_abcdefghijklmnop", "fake setup password", params)
+	if err == nil || got != nil {
+		t.Fatal("invalid Argon2 parameters must return an error and no setup")
+	}
+}
 
 func TestPaperKeyRoundTrip(t *testing.T) {
 	raw := kcrypto.RandBytes(32)
