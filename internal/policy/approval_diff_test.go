@@ -239,6 +239,43 @@ func TestChangesNarrowerWildcardDeletionAndDenyReorder(t *testing.T) {
     bỏ lệnh: sql /@QA
     quyền áp dụng: team/*/db → (bị chặn)
     duyệt: Hello/điện thoại → luôn chặn`)
+
+	// When a deny wildcard loses precedence to an allow wildcard, all effective settings
+	// (delivery, approval, ttl, max_runtime, allow_as) must be disclosed.
+	allowOld := parseDiffPolicy(t, `grants:
+  team/qa/*:
+    approval: deny
+  team/*/db:
+    kind: file
+    allow_commands: [curl]
+    approval: device
+    ttl: 2h
+    max_runtime: 5m
+    allow_as: [env]
+`)
+	allowCur := parseDiffPolicy(t, `grants:
+  team/*/db:
+    kind: file
+    allow_commands: [curl]
+    approval: device
+    ttl: 2h
+    max_runtime: 5m
+    allow_as: [env]
+  team/qa/*:
+    approval: deny
+`)
+	allowGot := Changes(allowOld, allowCur, SecretRef{Name: "team/qa/db", Env: "qa"})
+	assertChangeText(t, allowGot,
+		`~ SỬA quyền dùng secret team/*/db
+    ưu tiên wildcard: sau team/qa/* → trước team/qa/*`,
+		`~ SỬA quyền dùng secret team/qa/db
+    thêm lệnh: curl
+    quyền áp dụng: (bị chặn) → team/*/db
+    cấp dạng: (bị chặn) → file
+    duyệt: luôn chặn → chữ ký điện thoại
+    hết hạn: (bị chặn) → 2 giờ
+    chạy tối đa: (bị chặn) → 5 phút
+    cho đổi dạng (--as): (bị chặn) → env`)
 }
 
 func parseDiffPolicy(t *testing.T, src string) *Policy {

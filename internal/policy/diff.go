@@ -341,10 +341,14 @@ func Changes(old, cur *Policy, secrets ...SecretRef) []Change {
 						c.Secret = sec.Name
 						c.Prod = IsProd(sec.Name, sec.Env)
 						c.Added = append(c.Added, curRes.AllowCommands...)
-						c.Fields = append(c.Fields,
-							FieldChange{Label: "quyền áp dụng", Old: "(bị chặn)", New: curPat},
-							FieldChange{Label: "duyệt", Old: ApprovalText(ApprovalDeny), New: ApprovalText(curRes.Approval)},
-						)
+						c.Fields = append(c.Fields, FieldChange{Label: "quyền áp dụng", Old: "(bị chặn)", New: curPat})
+						for _, f := range grantFields(*curRes) {
+							oldVal := "(bị chặn)"
+							if f.label == "duyệt" {
+								oldVal = ApprovalText(ApprovalDeny)
+							}
+							c.Fields = append(c.Fields, FieldChange{Label: f.label, Old: oldVal, New: f.value})
+						}
 						out = append(out, c)
 					}
 				case oldErr == nil && curErr != nil:
