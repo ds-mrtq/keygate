@@ -1004,7 +1004,7 @@ func (b *Broker) cmdPolicyApply(ctx context.Context, s *session, w *respWriter, 
 		}
 	}
 	h := policy.Hash(data)
-	detail, doc, nChange, nWarn := policyReview(polPath, base, p, oldVer)
+	detail, doc, nChange, nWarn := policyReview(polPath, base, p, oldVer, vaultSecrets(s)...)
 	cmd := fmt.Sprintf("áp dụng policy.yaml v%d: %d thay đổi, %d cảnh báo", oldVer+1, nChange, nWarn)
 	res, err := b.humanApprove(ctx, s, approvalReq{op: "policy", command: cmd, detail: detail, doc: doc, bind: h, peer: peer, mode: policy.ApprovalUserPresence})
 	if err != nil {

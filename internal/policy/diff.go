@@ -18,18 +18,25 @@ const (
 // FieldChange is one setting that differs between two versions of a grant.
 type FieldChange struct{ Label, Old, New string }
 
+// SecretRef identifies a live secret in the vault (used to detect effective-grant changes).
+type SecretRef struct {
+	Name string
+	Env  string
+}
+
 // Change is one difference between the last applied policy and the new one.
 type Change struct {
 	Op       string // ChangeAdd | ChangeMod | ChangeDel | ChangeOracle
-	Secret   string // grant pattern ("" for oracle)
+	Secret   string // grant pattern, affected secret name, or "" for oracle
 	Prod     bool
-	Commands []string // allow_commands of the new grant (of the old one for del)
+	Fallback string   // del: wildcard grant pattern that still governs Secret ("" if denied)
+	Commands []string // allow_commands of the new grant (of the old one for del, or fallback when Fallback != "")
 	Added    []string // mod: allow_commands entries that are new
 	Removed  []string // mod: allow_commands entries that are gone
-	Delivery string   // new values (old ones for del)
+	Delivery string   // new values (old ones for del, or fallback when Fallback != "")
 	Approval string
 	TTL      string
-	Fields   []FieldChange // mod/oracle: settings that changed, besides allow_commands; add: optional settings (New only)
+	Fields   []FieldChange // mod/oracle: settings that changed, besides allow_commands; add/del-with-fallback: optional settings (New only)
 }
 
 // Warning is one risky setting of the new policy. Old = its grant is identical to the one in the
@@ -134,73 +141,226 @@ func newChange(op string, g Grant) Change {
 	return c
 }
 
-// Changes lists the differences from old (may be nil: everything is new) to cur.
-func Changes(old, cur *Policy) []Change {
-	var out []Change
-	oldG := map[string]Grant{}
-	if old != nil {
-		for _, g := range old.Grants {
-			oldG[g.Pattern] = g
+// globsOverlap reports whether some string matches both glob patterns ('*' = any run, '?' = any single rune).
+func globsOverlap(a, b string) bool {
+	ra, rb := []rune(a), []rune(b)
+	na, nb := len(ra), len(rb)
+	next := make([]bool, nb+1)
+	cur := make([]bool, nb+1)
+	next[nb] = true
+	for j := nb - 1; j >= 0; j-- {
+		next[j] = rb[j] == '*' && next[j+1]
+	}
+	for i := na - 1; i >= 0; i-- {
+		cur[nb] = ra[i] == '*' && next[nb]
+		for j := nb - 1; j >= 0; j-- {
+			switch {
+			case ra[i] == '*':
+				cur[j] = next[j] || cur[j+1]
+			case rb[j] == '*':
+				cur[j] = cur[j+1] || next[j]
+			case ra[i] == '?' || rb[j] == '?' || ra[i] == rb[j]:
+				cur[j] = next[j+1]
+			default:
+				cur[j] = false
+			}
+		}
+		next, cur = cur, next
+	}
+	return next[0]
+}
+
+func diffGrantFields(c *Change, o, g Grant) {
+	oldCmd, curCmd := map[string]bool{}, map[string]bool{}
+	for _, x := range o.AllowCommands {
+		oldCmd[x] = true
+	}
+	for _, x := range g.AllowCommands {
+		curCmd[x] = true
+		if !oldCmd[x] {
+			c.Added = append(c.Added, x)
 		}
 	}
-	curG := map[string]bool{}
+	for _, x := range o.AllowCommands {
+		if !curCmd[x] {
+			c.Removed = append(c.Removed, x)
+		}
+	}
+	if len(c.Added) == 0 && len(c.Removed) == 0 && !slices.Equal(o.AllowCommands, g.AllowCommands) {
+		c.Fields = append(c.Fields, FieldChange{"allow_commands", "thứ tự/số lần cũ", "đổi thứ tự hoặc lặp lại mục"})
+	}
+	om := map[string]string{}
+	for _, f := range grantFields(o) {
+		om[f.label] = f.value
+	}
+	for _, f := range grantFields(g) {
+		ov, was := om[f.label]
+		delete(om, f.label)
+		if !was {
+			ov = "(không đặt)"
+		}
+		if ov != f.value {
+			c.Fields = append(c.Fields, FieldChange{f.label, ov, f.value})
+		}
+	}
+	for _, f := range grantFields(o) { // settings that disappeared (max_runtime, allow_as)
+		if _, gone := om[f.label]; gone {
+			c.Fields = append(c.Fields, FieldChange{f.label, f.value, "(bỏ)"})
+		}
+	}
+	if len(c.Added) == 0 && len(c.Removed) == 0 && len(c.Fields) == 0 {
+		c.Fields = append(c.Fields, FieldChange{"thiết lập", rawSettings(o), rawSettings(g)})
+	}
+}
+
+// Changes lists the differences from old (may be nil: everything is new) to cur.
+// When live vault secrets are provided, it also reports secrets whose governing wildcard grant
+// changed due to precedence reordering or wildcard removal.
+func Changes(old, cur *Policy, secrets ...SecretRef) []Change {
+	var out []Change
+	oldG := map[string]Grant{}
+	oldPos := map[string]int{}
+	if old != nil {
+		for i, g := range old.Grants {
+			oldG[g.Pattern] = g
+			oldPos[g.Pattern] = i
+		}
+	}
+	curG := map[string]Grant{}
 	for _, g := range cur.Grants {
-		curG[g.Pattern] = true
+		curG[g.Pattern] = g
+	}
+	secretEnv := map[string]string{}
+	for _, sec := range secrets {
+		if sec.Name == "" {
+			continue
+		}
+		if _, ok := secretEnv[sec.Name]; !ok || IsProd(sec.Name, sec.Env) {
+			secretEnv[sec.Name] = sec.Env
+		}
+	}
+	for i, g := range cur.Grants {
 		o, had := oldG[g.Pattern]
 		if !had {
 			out = append(out, newChange(ChangeAdd, g))
 			continue
 		}
-		if sameGrant(o, g) {
+		var precedes []string
+		if isGlob(g.Pattern) {
+			gScore := globScore(g.Pattern)
+			gOldPos := oldPos[g.Pattern]
+			for _, other := range cur.Grants[i+1:] {
+				if !isGlob(other.Pattern) {
+					continue
+				}
+				otherOldPos, ok := oldPos[other.Pattern]
+				if !ok || otherOldPos >= gOldPos {
+					continue
+				}
+				if globScore(other.Pattern) == gScore && globsOverlap(g.Pattern, other.Pattern) && !sameGrant(g, other) {
+					precedes = append(precedes, other.Pattern)
+				}
+			}
+		}
+		if sameGrant(o, g) && len(precedes) == 0 {
 			continue
 		}
 		c := newChange(ChangeMod, g)
-		oldCmd, curCmd := map[string]bool{}, map[string]bool{}
-		for _, x := range o.AllowCommands {
-			oldCmd[x] = true
+		if !sameGrant(o, g) {
+			diffGrantFields(&c, o, g)
 		}
-		for _, x := range g.AllowCommands {
-			curCmd[x] = true
-			if !oldCmd[x] {
-				c.Added = append(c.Added, x)
-			}
-		}
-		for _, x := range o.AllowCommands {
-			if !curCmd[x] {
-				c.Removed = append(c.Removed, x)
-			}
-		}
-		if len(c.Added) == 0 && len(c.Removed) == 0 && !slices.Equal(o.AllowCommands, g.AllowCommands) {
-			c.Fields = append(c.Fields, FieldChange{"allow_commands", "thứ tự/số lần cũ", "đổi thứ tự hoặc lặp lại mục"})
-		}
-		om := map[string]string{}
-		for _, f := range grantFields(o) {
-			om[f.label] = f.value
-		}
-		for _, f := range grantFields(g) {
-			ov, was := om[f.label]
-			delete(om, f.label)
-			if !was {
-				ov = "(không đặt)"
-			}
-			if ov != f.value {
-				c.Fields = append(c.Fields, FieldChange{f.label, ov, f.value})
-			}
-		}
-		for _, f := range grantFields(o) { // settings that disappeared (max_runtime, allow_as)
-			if _, gone := om[f.label]; gone {
-				c.Fields = append(c.Fields, FieldChange{f.label, f.value, "(bỏ)"})
-			}
-		}
-		if len(c.Added) == 0 && len(c.Removed) == 0 && len(c.Fields) == 0 {
-			c.Fields = append(c.Fields, FieldChange{"thiết lập", rawSettings(o), rawSettings(g)})
+		if len(precedes) > 0 {
+			joined := strings.Join(precedes, ", ")
+			c.Fields = append(c.Fields, FieldChange{Label: "ưu tiên wildcard", Old: "sau " + joined, New: "trước " + joined})
 		}
 		out = append(out, c)
 	}
 	if old != nil {
 		for _, g := range old.Grants {
-			if !curG[g.Pattern] {
-				out = append(out, newChange(ChangeDel, g))
+			if _, still := curG[g.Pattern]; !still {
+				c := newChange(ChangeDel, g)
+				if !isGlob(g.Pattern) {
+					if fb, err := cur.Lookup(g.Pattern, secretEnv[g.Pattern]); err == nil {
+						c.Fallback = fb.Pattern
+						c.Commands = fb.AllowCommands
+						c.Delivery = deliveryText(*fb)
+						c.Approval = ApprovalText(fb.Approval)
+						c.TTL = ttlText(*fb)
+						for _, f := range grantFields(*fb)[3:] {
+							c.Fields = append(c.Fields, FieldChange{Label: f.label, New: f.value})
+						}
+					}
+				}
+				out = append(out, c)
+			}
+		}
+		if len(secrets) > 0 {
+			seenSec := map[SecretRef]bool{}
+			for _, sec := range secrets {
+				if sec.Name == "" || seenSec[sec] {
+					continue
+				}
+				seenSec[sec] = true
+				oldRes, oldErr := old.Lookup(sec.Name, sec.Env)
+				curRes, curErr := cur.Lookup(sec.Name, sec.Env)
+				var oldPat, curPat string
+				if oldErr == nil {
+					oldPat = oldRes.Pattern
+				}
+				if curErr == nil {
+					curPat = curRes.Pattern
+				}
+				if oldPat == curPat || curPat == sec.Name || oldPat == sec.Name {
+					continue
+				}
+				_, hadExact := oldG[sec.Name]
+				_, hasExact := curG[sec.Name]
+				if hadExact && !hasExact {
+					continue // exact-grant deletion row already reports fallback
+				}
+				switch {
+				case oldErr == nil && curErr == nil:
+					if sameGrant(*oldRes, *curRes) {
+						continue
+					}
+					if _, existed := oldG[curPat]; !existed {
+						continue // newly added wildcard already has a ChangeAdd row
+					}
+					c := newChange(ChangeMod, *curRes)
+					c.Secret = sec.Name
+					c.Prod = IsProd(sec.Name, sec.Env)
+					c.Fields = append(c.Fields, FieldChange{Label: "quyền áp dụng", Old: oldPat, New: curPat})
+					diffGrantFields(&c, *oldRes, *curRes)
+					out = append(out, c)
+				case oldErr != nil && curErr == nil:
+					if og, existed := oldG[curPat]; existed && og.Approval != ApprovalDeny {
+						c := newChange(ChangeMod, *curRes)
+						c.Secret = sec.Name
+						c.Prod = IsProd(sec.Name, sec.Env)
+						c.Added = append(c.Added, curRes.AllowCommands...)
+						c.Fields = append(c.Fields,
+							FieldChange{Label: "quyền áp dụng", Old: "(bị chặn)", New: curPat},
+							FieldChange{Label: "duyệt", Old: ApprovalText(ApprovalDeny), New: ApprovalText(curRes.Approval)},
+						)
+						out = append(out, c)
+					}
+				case oldErr == nil && curErr != nil:
+					if cg, still := curG[oldPat]; still && cg.Approval != ApprovalDeny {
+						c := Change{
+							Op:       ChangeMod,
+							Secret:   sec.Name,
+							Prod:     IsProd(sec.Name, sec.Env),
+							Approval: ApprovalText(ApprovalDeny),
+							TTL:      ttlText(Grant{}),
+							Removed:  oldRes.AllowCommands,
+							Fields: []FieldChange{
+								{Label: "quyền áp dụng", Old: oldPat, New: "(bị chặn)"},
+								{Label: "duyệt", Old: ApprovalText(oldRes.Approval), New: ApprovalText(ApprovalDeny)},
+							},
+						}
+						out = append(out, c)
+					}
+				}
 			}
 		}
 	}
@@ -250,7 +410,21 @@ func (c Change) Text() string {
 			fmt.Fprintf(&b, "\n    %s: %s → %s", f.Label, f.Old, f.New)
 		}
 	case ChangeDel:
-		b.WriteString("- BỎ quyền dùng secret " + c.Secret + " (lệnh sẽ phải xin duyệt lại hoặc bị chặn)")
+		if c.Fallback != "" {
+			b.WriteString("- BỎ quyền dùng secret " + c.Secret + " (rơi về grant wildcard " + c.Fallback + ")\n    lệnh được nhận secret (từ " + c.Fallback + "):")
+			if len(c.Commands) == 0 {
+				b.WriteString(" (không lệnh nào)")
+			}
+			for _, x := range c.Commands {
+				b.WriteString("\n      • " + x)
+			}
+			fmt.Fprintf(&b, "\n    cấp dạng: %s\n    duyệt: %s\n    hết hạn: %s", c.Delivery, c.Approval, c.TTL)
+			for _, f := range c.Fields {
+				fmt.Fprintf(&b, "\n    %s: %s", f.Label, f.New)
+			}
+		} else {
+			b.WriteString("- BỎ quyền dùng secret " + c.Secret + " (lệnh sẽ phải xin duyệt lại hoặc bị chặn)")
+		}
 	case ChangeOracle:
 		b.WriteString("~ SỬA công cụ Oracle (chương trình được cầm mật khẩu DB)")
 		for _, f := range c.Fields {

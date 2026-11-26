@@ -79,10 +79,26 @@ func shortCmds(cs []string) string {
 	return strings.Join(out, "; ")
 }
 
+// vaultSecrets returns the live (non-deleted) secrets in s so policy diffs can detect effective-grant changes.
+func vaultSecrets(s *session) []policy.SecretRef {
+	if s == nil || s.st == nil {
+		return nil
+	}
+	items := s.st.List()
+	out := make([]policy.SecretRef, 0, len(items))
+	for _, it := range items {
+		if it.Deleted || it.Name == "" {
+			continue
+		}
+		out = append(out, policy.SecretRef{Name: it.Name, Env: it.Env})
+	}
+	return out
+}
+
 // policyReview builds what the approver of `kg policy apply` sees: the plain text (phone, fallback)
 // and the table of the local dialog. base is the last applied policy (nil = none trusted).
-func policyReview(polPath string, base, p *policy.Policy, oldVer uint64) (string, *approve.ReviewDoc, int, int) {
-	changes := policy.Changes(base, p)
+func policyReview(polPath string, base, p *policy.Policy, oldVer uint64, secrets ...policy.SecretRef) (string, *approve.ReviewDoc, int, int) {
+	changes := policy.Changes(base, p, secrets...)
 	warns, keptProd := policy.Warnings(base, p)
 	doc := &approve.ReviewDoc{
 		Action: fmt.Sprintf("xin áp dụng policy.yaml thành v%d", oldVer+1),
@@ -166,7 +182,15 @@ func changeRow(c policy.Change) approve.ReviewRow {
 			r.What += "; " + f.Label + ": " + f.New
 		}
 	case policy.ChangeDel:
-		r.Label, r.What = "Bỏ", "không lệnh nào được nhận nữa"
+		r.Label = "Bỏ"
+		if c.Fallback != "" {
+			r.What = fmt.Sprintf("rơi về %s: %s", c.Fallback, shortCmds(c.Commands))
+			for _, f := range c.Fields {
+				r.What += "; " + f.Label + ": " + f.New
+			}
+		} else {
+			r.What = "không lệnh nào được nhận nữa"
+		}
 	case policy.ChangeOracle:
 		r.Label, r.Secret, r.What = "Sửa", "(công cụ Oracle)", "đổi chương trình được cầm mật khẩu DB"
 	default:
