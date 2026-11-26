@@ -1,6 +1,7 @@
 // gen-winres writes the Windows icon assets drawn by internal/icon:
-//   - cmd/kg/rsrc_windows_amd64.syso: COFF object with RT_ICON + RT_GROUP_ICON (id 1); the Go linker
-//     embeds it into kg.exe / kgw.exe, so Explorer, the taskbar and shortcuts show the logo;
+//   - cmd/kg/rsrc_windows_amd64.syso: COFF object with RT_ICON + RT_GROUP_ICON (id 1) and RT_VERSION
+//     (FileDescription/ProductName "KeyGate"); the Go linker embeds it into kg.exe / kgw.exe, so
+//     Explorer, the taskbar, shortcuts and Windows' tray-icon settings show the logo and the name;
 //   - docs/brand/keygate.ico and docs/brand/keygate.svg.
 //
 // Run from the repo root: go run ./tools/gen-winres
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"unicode/utf16"
 
 	"keygate/internal/icon"
 )
@@ -46,17 +48,89 @@ func run() error {
 const (
 	rtIcon      = 3
 	rtGroupIcon = 14
+	rtVersion   = 16
 	langNeutral = 0
 	groupID     = 1
 )
+
+// versionStrings are the StringFileInfo entries; Windows shows FileDescription as the app name
+// (Settings → Taskbar → Other system tray icons, notifications, Task Manager). Version numbers
+// stay 0: this object is generated once and committed, the release version is in `kg version`.
+var versionStrings = [][2]string{
+	{"CompanyName", "KeyGate"},
+	{"FileDescription", "KeyGate"},
+	{"ProductName", "KeyGate"},
+	{"LegalCopyright", "MIT License"},
+	// .NET FileVersionInfo ignores a string table without FileVersion.
+	{"FileVersion", "0.0.0.0 (see kg version)"},
+	{"ProductVersion", "0.0.0.0 (see kg version)"},
+}
+
+// versionInfo encodes a VS_VERSIONINFO block: VS_FIXEDFILEINFO (all versions 0, VFT_APP), one
+// StringTable 040904B0 (en-US, UTF-16) and the matching VarFileInfo Translation.
+func versionInfo() []byte {
+	var fixed bytes.Buffer
+	binary.Write(&fixed, binary.LittleEndian, [13]uint32{
+		0xFEEF04BD, 0x00010000, // signature, struct version
+		0, 0, 0, 0, // file and product versions
+		0x3F, 0, // flags mask, flags
+		0x00040004, 1, 0, // VOS_NT_WINDOWS32, VFT_APP, subtype
+		0, 0, // date
+	})
+	var strs [][]byte
+	for _, kv := range versionStrings {
+		v := utf16z(kv[1])
+		strs = append(strs, verNode(kv[0], 1, v, uint16(len(v)/2), nil))
+	}
+	table := verNode("040904B0", 1, nil, 0, strs)
+	sfi := verNode("StringFileInfo", 1, nil, 0, [][]byte{table})
+	tr := []byte{0x09, 0x04, 0xB0, 0x04} // 0x0409, 1200
+	vfi := verNode("VarFileInfo", 1, nil, 0, [][]byte{verNode("Translation", 0, tr, uint16(len(tr)), nil)})
+	return verNode("VS_VERSION_INFO", 0, fixed.Bytes(), uint16(fixed.Len()), [][]byte{sfi, vfi})
+}
+
+// verNode encodes one version-resource node: wLength, wValueLength, wType, key (UTF-16, NUL),
+// padding to 4, value, padding to 4, children (each padded to 4). wLength excludes the trailing
+// padding of the node.
+func verNode(key string, typ uint16, value []byte, valueLen uint16, children [][]byte) []byte {
+	var b bytes.Buffer
+	pad := func() {
+		for b.Len()%4 != 0 {
+			b.WriteByte(0)
+		}
+	}
+	binary.Write(&b, binary.LittleEndian, [3]uint16{0, valueLen, typ})
+	b.Write(utf16z(key))
+	pad()
+	b.Write(value)
+	for i, c := range children {
+		if i > 0 || len(value) > 0 {
+			pad()
+		}
+		b.Write(c)
+	}
+	out := b.Bytes()
+	binary.LittleEndian.PutUint16(out, uint16(len(out)))
+	return out
+}
+
+func utf16z(s string) []byte {
+	u := append(utf16.Encode([]rune(s)), 0)
+	out := make([]byte, 2*len(u))
+	for i, c := range u {
+		binary.LittleEndian.PutUint16(out[2*i:], c)
+	}
+	return out
+}
 
 type leaf struct {
 	id   uint16
 	data []byte
 }
 
-// syso builds an AMD64 COFF object with one .rsrc section holding the icon images (ids 1..n) and
-// one group icon (id groupID). Data-entry RVAs are section offsets fixed up by ADDR32NB relocations.
+// syso builds an AMD64 COFF object with one .rsrc section holding the icon images (ids 1..n), one
+// group icon (id groupID) and the version info (id 1). Data-entry RVAs are section offsets fixed up
+// by ADDR32NB relocations.
 func syso(images []icon.IconImage) []byte {
 	var group bytes.Buffer
 	binary.Write(&group, binary.LittleEndian, [3]uint16{0, 1, uint16(len(images))})
@@ -70,7 +144,7 @@ func syso(images []icon.IconImage) []byte {
 	types := []struct {
 		id     uint16
 		leaves []leaf
-	}{{rtIcon, icons}, {rtGroupIcon, []leaf{{groupID, group.Bytes()}}}} // sorted by type id
+	}{{rtIcon, icons}, {rtGroupIcon, []leaf{{groupID, group.Bytes()}}}, {rtVersion, []leaf{{1, versionInfo()}}}} // sorted by type id
 
 	// Layout: root dir, type dirs, name dirs (one language each), data entries, then data.
 	const dirSize, entSize, dataEntSize = 16, 8, 16
