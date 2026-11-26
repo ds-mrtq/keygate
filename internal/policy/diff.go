@@ -320,7 +320,8 @@ func Changes(old, cur *Policy, secrets ...SecretRef) []Change {
 				}
 				switch {
 				case oldErr == nil && curErr == nil:
-					if sameGrant(*oldRes, *curRes) {
+					_, oldStill := curG[oldPat]
+					if oldStill && sameGrant(*oldRes, *curRes) {
 						continue
 					}
 					if _, existed := oldG[curPat]; !existed {
@@ -330,7 +331,9 @@ func Changes(old, cur *Policy, secrets ...SecretRef) []Change {
 					c.Secret = sec.Name
 					c.Prod = IsProd(sec.Name, sec.Env)
 					c.Fields = append(c.Fields, FieldChange{Label: "quyền áp dụng", Old: oldPat, New: curPat})
-					diffGrantFields(&c, *oldRes, *curRes)
+					if !sameGrant(*oldRes, *curRes) {
+						diffGrantFields(&c, *oldRes, *curRes)
+					}
 					out = append(out, c)
 				case oldErr != nil && curErr == nil:
 					if og, existed := oldG[curPat]; existed && og.Approval != ApprovalDeny {

@@ -218,6 +218,16 @@ func TestChangesNarrowerWildcardDeletionAndDenyReorder(t *testing.T) {
     bỏ lệnh: sql /@QA
     quyền áp dụng: team/qa/* → team/*`)
 
+	// Deleting a narrower wildcard causes a vault secret to fall back to a broader wildcard,
+	// even when both wildcards have identical settings.
+	sameWildOld := parseDiffPolicy(t, "grants:\n  team/qa/*:\n    allow_commands: [curl]\n  team/*:\n    allow_commands: [curl]\n")
+	sameWildCur := parseDiffPolicy(t, "grants:\n  team/*:\n    allow_commands: [curl]\n")
+	sameWildGot := Changes(sameWildOld, sameWildCur, SecretRef{Name: "team/qa/db", Env: "qa"})
+	assertChangeText(t, sameWildGot,
+		`- BỎ quyền dùng secret team/qa/* (lệnh sẽ phải xin duyệt lại hoặc bị chặn)`,
+		`~ SỬA quyền dùng secret team/qa/db
+    quyền áp dụng: team/qa/* → team/*`)
+
 	// Reordering a deny wildcard ahead of an overlapping allow wildcard transitions the secret to denied.
 	denyOld := parseDiffPolicy(t, "grants:\n  team/*/db:\n    allow_commands: [\"sql /@QA\"]\n  team/qa/*:\n    approval: deny\n")
 	denyCur := parseDiffPolicy(t, "grants:\n  team/qa/*:\n    approval: deny\n  team/*/db:\n    allow_commands: [\"sql /@QA\"]\n")
