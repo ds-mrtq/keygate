@@ -2,6 +2,7 @@ package syncer
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
@@ -369,7 +370,10 @@ func TestVerifyViaFork(t *testing.T) {
 	w.mustSync(b)
 	// second channel (e.g. git) is an honest copy
 	g := newFake("git")
-	snap, _ := w.ch.Pull(w.ctx, transport.Since{})
+	snap, err := w.ch.Pull(w.ctx, transport.Since{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i, l := range snap.Members {
 		g.Members[i] = l
 	}
@@ -382,14 +386,59 @@ func TestVerifyViaFork(t *testing.T) {
 	for d, c := range snap.Checkpoints {
 		g.CPs[d] = c
 	}
-	if _, err := VerifyVia(w.ctx, w.a.st, w.ch, g); err != nil {
+	want := w.a.st.Fingerprint()
+	// A local-only record must not affect verification of the two channels.
+	put(t, w.a, "", "n2", "v2")
+	got, err := VerifyVia(w.ctx, w.a.st, w.ch, g)
+	if err != nil {
 		t.Fatalf("honest channels: %v", err)
 	}
-	// relay shows a fork: A writes one more record only visible on the relay
-	put(t, w.a, "", "n2", "v2")
+	if got != want {
+		t.Fatalf("honest channels: fingerprint = %q, want %q", got, want)
+	}
+	// Publishing the record to just one channel makes the views diverge.
 	w.mustSync(w.a)
-	if _, err := VerifyVia(w.ctx, w.a.st, w.ch, g); !errors.Is(err, ErrFork) {
-		t.Fatalf("want ErrFork, got %v", err)
+	if fp, err := VerifyVia(w.ctx, w.a.st, w.ch, g); fp != "" || !errors.Is(err, ErrFork) {
+		t.Fatalf("divergent channels: got (%q, %v), want empty fingerprint and ErrFork", fp, err)
+	}
+}
+
+type pullErrorChannel struct {
+	transport.Transport
+	err error
+}
+
+func (c pullErrorChannel) Pull(context.Context, transport.Since) (transport.Snapshot, error) {
+	return transport.Snapshot{}, c.err
+}
+
+func TestVerifyViaChannelErrors(t *testing.T) {
+	w := newWorld(t)
+	foreign := newWorld(t).ch
+	foreign.name = "foreign"
+	unavailable := errors.New("test channel unavailable")
+	offline := pullErrorChannel{Transport: newFake("offline"), err: unavailable}
+
+	for _, tt := range []struct {
+		name               string
+		primary, secondary transport.Transport
+		failed             transport.Transport
+		wantErr            error
+	}{
+		{"primary pull fails", offline, w.ch, offline, unavailable},
+		{"secondary pull fails", w.ch, offline, offline, unavailable},
+		{"foreign primary vault", foreign, w.ch, foreign, store.ErrBrokenChain},
+		{"foreign secondary vault", w.ch, foreign, foreign, store.ErrBrokenChain},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fp, err := VerifyVia(w.ctx, w.a.st, tt.primary, tt.secondary)
+			if fp != "" || !errors.Is(err, tt.wantErr) {
+				t.Fatalf("got (%q, %v), want empty fingerprint and %v", fp, err, tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.failed.Name()+":") {
+				t.Fatalf("error %q does not name failing channel %q", err, tt.failed.Name())
+			}
+		})
 	}
 }
 
