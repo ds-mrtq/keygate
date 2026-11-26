@@ -1,12 +1,14 @@
 package store
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"testing"
+	"time"
 
 	"keygate/internal/checkpoint"
 	"keygate/internal/kcrypto"
@@ -119,6 +121,73 @@ func TestVerifyCheckpoints(t *testing.T) {
 	if err != nil || len(out) != 0 {
 		t.Fatalf("empty: %v %v", out, err)
 	}
+}
+
+func TestStoreCheckpointRoundTrip(t *testing.T) {
+	local, keys, _ := newApproverFixture(t)
+	peerID := addKeyHolder(t, local, keys.OwnerPriv, "peer")
+	if _, err := local.Put("", record.Plain{Name: "test/local", Value: "fake-local"}); err != nil {
+		t.Fatal(err)
+	}
+	peer, err := Join(filepath.Join(t.TempDir(), "kg"), peerID, fullSnapshot(local), local.GenesisPin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+
+	if _, err := peer.Put("", record.Plain{Name: "test/peer-first", Value: "fake-peer-first"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("test", 90*60))
+	earlier, err := peer.WriteCheckpoint(now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := peer.Put("", record.Plain{Name: "test/peer-second", Value: "fake-peer-second"}); err != nil {
+		t.Fatal(err)
+	}
+	current, err := peer.WriteCheckpoint(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp, err := checkpoint.Parse(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Verify(peer.Members().Devices[peerID.Dev].EdPub); err != nil {
+		t.Fatalf("checkpoint is not signed by the publishing device: %v", err)
+	}
+	wantSeen := map[string]uint64{local.ID.Dev: 1, peerID.Dev: 2}
+	if cp.Dev != peerID.Dev || cp.Vault != local.Vault() || cp.Time != "2026-01-02T01:34:05Z" ||
+		cp.MembersN != peer.Members().Count || !reflect.DeepEqual(cp.Seen, wantSeen) {
+		t.Fatalf("checkpoint did not describe the full verified view: %+v", cp)
+	}
+
+	checkStored := func(home string) {
+		t.Helper()
+		got, err := os.ReadFile(filepath.Join(home, "checkpoints", peerID.Dev+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, current) {
+			t.Fatal("stored checkpoint differs from the higher-progress checkpoint")
+		}
+	}
+	checkStored(peer.Home)
+	snap := fullSnapshot(peer)
+	snap.Checkpoints = map[string][]byte{peerID.Dev: current}
+	result, err := local.IngestFrom("dir", snap)
+	if err != nil || result.Records != 2 || result.Checkpoints != 1 {
+		t.Fatalf("ingest new checkpoint and records: %+v, %v", result, err)
+	}
+	checkStored(local.Home)
+
+	snap.Checkpoints[peerID.Dev] = earlier
+	result, err = local.IngestFrom("dir", snap)
+	if err != nil || result.Checkpoints != 0 {
+		t.Fatalf("ingest lower-progress checkpoint: %+v, %v", result, err)
+	}
+	checkStored(local.Home)
 }
 
 func TestRecoverSnapshot(t *testing.T) {
