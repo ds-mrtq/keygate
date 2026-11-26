@@ -51,6 +51,20 @@ func (b *balloonQueue) add(title, text string) (delay time.Duration, sched bool)
 	return b.waitLocked(), true
 }
 
+// hint is a balloon only worth showing at once (the Hello dialog it announces is already on
+// screen and may be answered before a delayed balloon appears): it is dropped instead of queued
+// while another balloon is showing or waiting. sched true = the caller must run next now.
+func (b *balloonQueue) hint(title, text string) (sched bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.armed || len(b.q) > 0 || b.waitLocked() > 0 {
+		return false
+	}
+	b.q = append(b.q, [2]string{title, text})
+	b.armed = true
+	return true
+}
+
 func (b *balloonQueue) waitLocked() time.Duration {
 	if b.last.IsZero() {
 		return 0

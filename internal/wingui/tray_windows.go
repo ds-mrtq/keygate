@@ -244,6 +244,14 @@ func (t *Tray) Balloon(title, text string) {
 	}
 }
 
+// Hint shows a balloon only when none is showing or waiting; otherwise it is dropped. For the
+// "Windows Hello is coming" notice: queued, it could appear after the user already answered.
+func (t *Tray) Hint(title, text string) {
+	if t.balloons.hint(title, text) {
+		t.postBalloon(0)
+	}
+}
+
 func (t *Tray) postBalloon(after time.Duration) {
 	if after <= 0 {
 		procPostMessage.Call(t.hwnd, wmTrayBalloon, 0, 0)

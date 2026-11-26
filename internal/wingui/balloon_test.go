@@ -62,3 +62,32 @@ func TestBalloonQueueWaitsForGapAndDropsRepeats(t *testing.T) {
 		t.Fatalf("queue bounded, newest kept: %v", q.q)
 	}
 }
+
+// The Hello notice is a hint: right after another balloon it is dropped, never shown late (the
+// user may already have answered the Hello dialog by then).
+func TestBalloonHintDroppedWhileAnotherShows(t *testing.T) {
+	c := &fakeClock{t: time.Unix(1000, 0)}
+	q := newBalloonQueue(5*time.Second, c.now)
+	if !q.hint("KeyGate cần Windows Hello", "mở khóa") {
+		t.Fatal("hint with nothing on screen must show")
+	}
+	q.next()
+	c.t = c.t.Add(30 * time.Second)
+	if _, sched := q.add("KeyGate chưa mở khóa", "từ chối"); !sched {
+		t.Fatal("refusal must be scheduled")
+	}
+	if q.hint("KeyGate cần Windows Hello", "mở khóa") {
+		t.Fatal("hint while a balloon is scheduled must be dropped")
+	}
+	if it, ok, _, more := q.next(); !ok || more || it[0] != "KeyGate chưa mở khóa" {
+		t.Fatalf("only the refusal is shown: %v %v %v", it, ok, more)
+	}
+	c.t = c.t.Add(time.Second)
+	if q.hint("KeyGate cần Windows Hello", "mở khóa") {
+		t.Fatal("hint while the refusal is on screen must be dropped")
+	}
+	c.t = c.t.Add(5 * time.Second)
+	if !q.hint("KeyGate cần Windows Hello", "mở khóa") {
+		t.Fatal("hint after the gap must show")
+	}
+}
