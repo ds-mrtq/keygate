@@ -305,6 +305,103 @@ func TestGrantRevealCommands(t *testing.T) {
 	a.do(t, "lock")
 }
 
+func TestGrantsListAndRevokeCommands(t *testing.T) {
+	a, _, _ := commandVault(t)
+	const value = "fake-grants-secret-value"
+	names := []string{"test/first", "test/second"}
+	st, err := a.openStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		if _, err := st.Put("", record.Plain{Name: name, Kind: "env", EnvName: "KG_TEST_TOKEN", Value: value}); err != nil {
+			st.Close()
+			t.Fatal(err)
+		}
+	}
+	st.Close()
+	pol := "grants:\n  'test/*':\n    kind: env\n    allow_commands: [\"go version\"]\n    approval: user-presence\n"
+	if err := os.WriteFile(filepath.Join(a.home, "policy.yaml"), []byte(pol), 0600); err != nil {
+		t.Fatal(err)
+	}
+	a.startBroker(t)
+	a.do(t, "policy", "apply")
+	a.do(t, "session", "end")
+	for _, name := range names {
+		a.do(t, "grant", name, "--", "go", "version")
+	}
+
+	assertGrants := func(want ...string) {
+		t.Helper()
+		out := a.do(t, "grants")
+		if strings.Contains(out+a.errb.String(), value) {
+			t.Fatal("grant listing exposed a secret value")
+		}
+		if len(want) == 0 {
+			if !strings.Contains(out, "Không có grant nào") {
+				t.Fatalf("expected empty grant list, got %q", out)
+			}
+			return
+		}
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if len(lines) != len(want)+1 {
+			t.Fatalf("want %d grant rows, got %q", len(want), out)
+		}
+		got := make([]string, 0, len(want))
+		for _, line := range lines[1:] {
+			fields := strings.Fields(line)
+			if len(fields) == 0 || !strings.Contains(line, "go version") ||
+				!slices.Contains(fields, "user-presence") || !slices.Contains(fields, "by=hello") ||
+				fields[len(fields)-1] != "true" {
+				t.Fatalf("want an explicitly approved, durable grant row, got %q", line)
+			}
+			got = append(got, fields[0])
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, want) {
+			t.Fatalf("grant names = %v, want %v", got, want)
+		}
+	}
+	approvalCount := func() int {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.approvals
+	}
+	before := approvalCount()
+	assertGrants(names...)
+	commandFails(t, a, "kg grants revoke", "grants", "revoke")
+	commandFails(t, a, "kg grants revoke", "grants", "revoke", names[0], "--all")
+	commandFails(t, a, "kg grants revoke", "grants", "revoke", names[0], names[1])
+	assertGrants(names...)
+
+	if out := a.do(t, "grants", "revoke", names[0]); !strings.Contains(out, "thu hồi 1 grant") {
+		t.Fatalf("expected one revoked grant, got %q", out)
+	}
+	assertGrants(names[1])
+	a.do(t, "grant", names[1], "--", "go", "version")
+	if after := approvalCount(); after != before {
+		t.Fatalf("listing or revoking a different grant asked for %d approvals, want none", after-before)
+	}
+	a.do(t, "grant", names[0], "--", "go", "version")
+	if after := approvalCount(); after != before+1 {
+		t.Fatalf("requesting the revoked grant asked for %d approvals, want one", after-before)
+	}
+
+	a.do(t, "lock")
+	assertGrants(names...)
+	if out := a.do(t, "grants", "revoke", "--all"); !strings.Contains(out, "thu hồi 2 grant") {
+		t.Fatalf("expected both grants to be revoked, got %q", out)
+	}
+	assertGrants()
+	status, err := a.client().Status(context.Background())
+	if err != nil || status.Unlocked {
+		t.Fatalf("vault must stay locked during grant revocation: unlocked=%t, err=%v", status.Unlocked, err)
+	}
+	if after := approvalCount(); after != before+1 {
+		t.Fatalf("grant revocation while locked asked for %d approvals, want none", after-(before+1))
+	}
+}
+
 func TestImportDotenvCommand(t *testing.T) {
 	a, _, _ := commandVault(t)
 	var deny atomic.Bool
