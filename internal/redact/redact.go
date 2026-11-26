@@ -76,7 +76,10 @@ func innerValues(v string) []string {
 			if strings.Contains(m[3], "''") {
 				vals = append(vals, strings.ReplaceAll(m[3], "''", "'"))
 			}
-			for _, val := range append(vals, decodedForms(m[2]+m[3]+m[4])...) {
+			for _, val := range vals {
+				vals = append(vals, decodedForms(val)...)
+			}
+			for _, val := range vals {
 				if len(val) >= minInterior && val != v {
 					out = append(out, val)
 				}

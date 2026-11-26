@@ -110,3 +110,15 @@ func TestDecodedPEMBodyLineMasked(t *testing.T) {
 		t.Errorf("PEM armor line masked: %q", got)
 	}
 }
+
+// TestDecodedClientKeyMaskedJSONWrapped: a JSON kubeconfig whose client-key-data is line-wrapped
+// with escaped newlines is decoded from the unescaped value.
+func TestDecodedClientKeyMaskedJSONWrapped(t *testing.T) {
+	b64 := base64.StdEncoding.EncodeToString([]byte(fakeClientKeyPEM))
+	wrapped := b64[:40] + `\n` + b64[40:]
+	r := New([]Secret{{Name: "kc", Value: `{"users":[{"user":{"client-key-data":"` + wrapped + `"}}]}`}})
+	body := strings.Split(fakeClientKeyPEM, "\n")[1]
+	if got := r.String(fakeClientKeyPEM); strings.Contains(got, body) {
+		t.Errorf("decoded PEM from wrapped JSON client-key-data printed unmasked: %q", got)
+	}
+}
