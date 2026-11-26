@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"keygate/internal/approve"
@@ -603,6 +605,54 @@ func TestCopyAndCompareCommands(t *testing.T) {
 		if err != nil || p.EnvName != override {
 			t.Fatalf("%s did not receive the env-name override: %v", name, err)
 		}
+	}
+}
+
+func TestHookCheckCommand(t *testing.T) {
+	const (
+		home       = "/synthetic/keygate-vault"
+		marker     = "fake-private-filename"
+		allowed    = `{"tool_name":"Read","tool_input":{"file_path":"README.md"}}`
+		blocked    = `{"tool_name":"Read","tool_input":{"file_path":"` + home + `/` + marker + `.txt"}}`
+		inputLimit = 4 << 20
+	)
+	atLimit := allowed + strings.Repeat(" ", inputLimit-len(allowed))
+
+	for _, tc := range []struct {
+		name     string
+		input    io.Reader
+		wantExit int
+		wantDiag string
+	}{
+		{"allowed", strings.NewReader(allowed), 0, ""},
+		{"allowed at size limit", strings.NewReader(atLimit), 0, ""},
+		{"blocked vault path", strings.NewReader(blocked), 2, "Chặn: truy cập thư mục kho khóa KeyGate"},
+		{"malformed JSON", strings.NewReader(`{"tool_name":"Read"`), 2, "hook: invalid JSON"},
+		{"over size limit", strings.NewReader(atLimit + " "), 2, "đầu vào quá lớn"},
+		{"read failure after valid JSON", io.MultiReader(strings.NewReader(allowed), iotest.ErrReader(errors.New("test read failure"))), 2, "test read failure"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newTestApp(t, home)
+			a.stdin = tc.input
+			got := a.run([]string{"hook", "check"})
+			if got != tc.wantExit {
+				t.Errorf("hook check exit = %d, want %d", got, tc.wantExit)
+			}
+			if a.out.Len() != 0 {
+				t.Error("hook check unexpectedly wrote to stdout")
+			}
+			diag := a.errb.String()
+			if tc.wantDiag == "" {
+				if diag != "" {
+					t.Error("allowed input produced a diagnostic")
+				}
+			} else if !strings.Contains(diag, tc.wantDiag) {
+				t.Errorf("stderr missing diagnostic %q", tc.wantDiag)
+			}
+			if strings.Contains(diag, marker) {
+				t.Error("stderr echoed a protected filename")
+			}
+		})
 	}
 }
 
