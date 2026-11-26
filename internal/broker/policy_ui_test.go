@@ -93,6 +93,134 @@ func TestPolicyWindowShowsBlockedRun(t *testing.T) {
 	}
 }
 
+// Reordering two overlapping, equally specific wildcard grants must produce change rows in both
+// the `kg policy apply` approval dialog and the tray Policy window's pending preview.
+func TestPolicyApplyAndWindowShowOverlappingWildcardReorder(t *testing.T) {
+	f := newFixture(t, time.Hour, time.Hour)
+	f.put("", "team/qa/db", "qa")
+	ctx := context.Background()
+
+	polV1 := `grants:
+  team/*/db:
+    allow_commands: ["sql /@HTTEST"]
+    approval: user-presence
+  team/qa/*:
+    allow_commands: ["curl"]
+    approval: device
+`
+	polV2 := `grants:
+  team/qa/*:
+    allow_commands: ["curl"]
+    approval: device
+  team/*/db:
+    allow_commands: ["sql /@HTTEST"]
+    approval: user-presence
+`
+	f.policy(polV1, false)
+	if _, err := f.cli.PolicyApply(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Swap the two wildcards without applying yet: PolicyForUI must show pending changes.
+	f.policy(polV2, false)
+	ov, err := f.b.PolicyForUI(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasBadge(ov.Badges, "2 thay đổi chưa áp dụng") {
+		t.Fatalf("PolicyForUI missing pending wildcard reorder changes: badges=%v\n%s", ov.Badges, ov.Text)
+	}
+	if !strings.Contains(ov.Text, "ưu tiên wildcard: sau team/*/db → trước team/*/db") ||
+		!strings.Contains(ov.Text, "quyền áp dụng: team/*/db → team/qa/*") {
+		t.Fatalf("PolicyForUI text missing precedence/secret change:\n%s", ov.Text)
+	}
+
+	// Now run `kg policy apply`: the approval prompt must show both rows (not 0 changes).
+	before := len(f.prompt.String())
+	if _, err := f.cli.PolicyApply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	out := f.prompt.String()[before:]
+	for _, want := range []string{
+		"2 thay đổi",
+		"~ SỬA quyền dùng secret team/qa/*",
+		"ưu tiên wildcard: sau team/*/db → trước team/*/db",
+		"~ SỬA quyền dùng secret team/qa/db",
+		"quyền áp dụng: team/*/db → team/qa/*",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("kg policy apply prompt lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// Removing an exact-name grant while a wildcard still matches must disclose the fallback wildcard
+// and its settings in both `kg policy apply` and the tray Policy window.
+func TestPolicyApplyAndWindowShowExactGrantDeletionWildcardFallback(t *testing.T) {
+	f := newFixture(t, time.Hour, time.Hour)
+	f.put("", "team/qa/db", "qa")
+	ctx := context.Background()
+
+	polV1 := `grants:
+  team/qa/db:
+    allow_commands: ["sql /@HTTEST"]
+    approval: user-presence
+  team/*:
+    allow_commands: ["curl"]
+    approval: device
+`
+	polV2 := `grants:
+  team/*:
+    allow_commands: ["curl"]
+    approval: device
+`
+	f.policy(polV1, false)
+	if _, err := f.cli.PolicyApply(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	f.policy(polV2, false)
+	ov, err := f.b.PolicyForUI(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delRow *approve.ReviewRow
+	for i := range ov.Rows {
+		if ov.Rows[i].Group == approve.GroupChange && ov.Rows[i].Secret == "team/qa/db" {
+			delRow = &ov.Rows[i]
+			break
+		}
+	}
+	if delRow == nil {
+		t.Fatalf("PolicyForUI missing pending deletion row for team/qa/db: %+v", ov.Rows)
+	}
+	if !strings.Contains(delRow.What, "rơi về team/*") || !strings.Contains(delRow.What, "curl") {
+		t.Fatalf("PolicyForUI deletion row does not show wildcard fallback: %+v", *delRow)
+	}
+	if delRow.Approval != "chữ ký điện thoại" {
+		t.Fatalf("PolicyForUI deletion row approval=%q, want fallback approval", delRow.Approval)
+	}
+
+	before := len(f.prompt.String())
+	if _, err := f.cli.PolicyApply(ctx); err != nil {
+		t.Fatal(err)
+	}
+	out := f.prompt.String()[before:]
+	for _, want := range []string{
+		"- BỎ quyền dùng secret team/qa/db (rơi về grant wildcard team/*)",
+		"lệnh được nhận secret (từ team/*):",
+		"curl",
+		"duyệt: chữ ký điện thoại",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("kg policy apply prompt lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "lệnh sẽ phải xin duyệt lại hoặc bị chặn") {
+		t.Errorf("kg policy apply prompt falsely claims secret is blocked despite wildcard fallback:\n%s", out)
+	}
+}
+
 func hasBadge(bs []approve.Badge, prefix string) bool {
 	for _, b := range bs {
 		if strings.HasPrefix(b.Text, prefix) {

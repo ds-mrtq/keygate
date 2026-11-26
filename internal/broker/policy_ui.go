@@ -48,7 +48,7 @@ func (b *Broker) PolicyForUI(ctx context.Context) (approve.ReviewDoc, error) {
 	if applied != nil {
 		blocked = b.verifyPolicy(s)
 	}
-	return policyOverview(polPath, applied, ver, when, stamps, curPol, curErr == nil && policy.Hash(cur) != pinHash, firstErr(curErr, parseErr), blocked), nil
+	return policyOverview(polPath, applied, ver, when, stamps, curPol, curErr == nil && policy.Hash(cur) != pinHash, firstErr(curErr, parseErr), blocked, vaultSecrets(s)...), nil
 }
 
 // verifyPolicy runs the checks loadPolicy makes before kg run (pin hash/MAC, version floor) without
@@ -88,7 +88,7 @@ func firstErr(es ...error) error {
 // (nil = none), stamps = when each grant got its content, cur = policy.yaml as parsed now (nil when
 // unreadable: curErr), pending = cur differs from it, blocked = why kg run refuses every grant now
 // (nil = applied is in force).
-func policyOverview(polPath string, applied *policy.Policy, ver uint64, when string, stamps map[string]policy.GrantStamp, cur *policy.Policy, pending bool, curErr, blocked error) approve.ReviewDoc {
+func policyOverview(polPath string, applied *policy.Policy, ver uint64, when string, stamps map[string]policy.GrantStamp, cur *policy.Policy, pending bool, curErr, blocked error, secrets ...policy.SecretRef) approve.ReviewDoc {
 	doc := approve.ReviewDoc{Requester: "Policy", Chain: approve.Sanitize(polPath, 500)}
 	inForce := applied != nil
 	// whenOf dates a grant in force: a matching stamp, else it predates stamping (≤ this version).
@@ -134,7 +134,7 @@ func policyOverview(polPath string, applied *policy.Policy, ver uint64, when str
 	case applied == nil:
 		applied = cur // nothing in force: describe policy.yaml itself below (nil when unreadable)
 	case cur != nil && pending: // what `kg policy apply` would change now
-		changes := policy.Changes(applied, cur)
+		changes := policy.Changes(applied, cur, secrets...)
 		if len(changes) > 0 {
 			fmt.Fprintf(&t, "THAY ĐỔI CHƯA ÁP DỤNG (%d):\n", len(changes))
 			for _, c := range changes {

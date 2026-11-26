@@ -196,6 +196,10 @@ func ParseTTL(s string) (time.Duration, error) {
 
 func isGlob(s string) bool { return strings.ContainsAny(s, "*?") }
 
+func globScore(pattern string) int {
+	return len(strings.NewReplacer("*", "", "?", "").Replace(pattern))
+}
+
 // IsProd reports the PROD default-deny condition: env is prod/prd/production, or any token of the
 // name (split on non-alphanumerics) is "prod" or "prd" (ebs/prod/x, prod/x, ebs-prod/x, ebs/prd/x).
 func IsProd(name, env string) bool {
@@ -224,7 +228,7 @@ func (p *Policy) Lookup(name, env string) (*Grant, error) {
 		case g.Pattern == name:
 			score = 1 << 20
 		case isGlob(g.Pattern) && allowlist.Glob(g.Pattern, name):
-			score = len(strings.NewReplacer("*", "", "?", "").Replace(g.Pattern))
+			score = globScore(g.Pattern)
 		default:
 			continue
 		}
