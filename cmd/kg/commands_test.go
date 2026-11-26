@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -302,6 +303,125 @@ func TestGrantRevealCommands(t *testing.T) {
 		t.Fatal("denied reveal leaked value")
 	}
 	a.do(t, "lock")
+}
+
+func TestImportDotenvCommand(t *testing.T) {
+	a, _, _ := commandVault(t)
+	var deny atomic.Bool
+	a.approver = approve.Func(func(context.Context, string) error {
+		if deny.Load() {
+			return approve.ErrNotVerified
+		}
+		return nil
+	})
+	a.startBroker(t)
+
+	path := filepath.Join(t.TempDir(), ".env")
+	write := func(contents string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkFile := func(want string) {
+		t.Helper()
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatal("unexpected dotenv contents")
+		}
+	}
+	checkNoValues := func() {
+		t.Helper()
+		if strings.Contains(a.out.String()+a.errb.String(), "fake-dotenv-") {
+			t.Fatal("CLI exposed a dotenv value or unparsed line")
+		}
+	}
+
+	const original = "SAME_KEY=fake-dotenv-match\nDIFF_KEY=fake-dotenv-before\nEXTRA_KEY=fake-dotenv-extra\n"
+	write(original)
+	empty := a.do(t, "fingerprint")
+	deny.Store(true)
+	commandFails(t, a, "bị từ chối", "import", "--dotenv", path, "--prefix", "test/", "--rewrite")
+	checkNoValues()
+	checkFile(original)
+	if a.do(t, "fingerprint") != empty {
+		t.Fatal("denied import changed the vault")
+	}
+	deny.Store(false)
+	a.do(t, "import", "--dotenv", path, "--prefix", "test/")
+	checkNoValues()
+	checkFile(original)
+
+	const changed = "SAME_KEY=fake-dotenv-match\r\nDIFF_KEY=fake-dotenv-after # keep\r\nNEW_KEY=fake-dotenv-new\r\nfake-dotenv-unparsed\r\n"
+	write(changed)
+	before := a.do(t, "fingerprint")
+	compare := []string{"import", "--dotenv", path, "--prefix", "test/", "--compare"}
+	deny.Store(true)
+	commandFails(t, a, "bị từ chối", compare...)
+	checkNoValues()
+	deny.Store(false)
+	out := a.do(t, compare...)
+	checkNoValues()
+	rows := strings.Split(strings.TrimSpace(out), "\n")
+	for i, row := range rows {
+		rows[i] = strings.Join(strings.Fields(row), " ")
+	}
+	slices.Sort(rows)
+	wantRows := []string{"diff test/diff-key", "extra test/extra-key", "missing test/new-key", "same test/same-key", "unparsed line 4"}
+	if !slices.Equal(rows, wantRows) {
+		t.Errorf("compare output: got %q, want %q", rows, wantRows)
+	}
+	checkFile(changed)
+	if a.do(t, "fingerprint") != before {
+		t.Fatal("compare changed the vault")
+	}
+
+	a.do(t, "import", "--dotenv", path, "--prefix", "test/", "--rewrite")
+	checkNoValues()
+	checkFile("SAME_KEY=${secret:test/same-key}\r\nDIFF_KEY=${secret:test/diff-key} # keep\r\nNEW_KEY=${secret:test/new-key}\r\nfake-dotenv-unparsed\r\n")
+}
+
+func TestDeleteBatchCommand(t *testing.T) {
+	a, _, _ := commandVault(t)
+	st, err := a.openStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"test/one", "test/two", "test/keep"} {
+		if _, err := st.Put("", record.Plain{Name: name, Kind: "env", EnvName: "KG_TEST_TOKEN", Value: "fake-delete-value"}); err != nil {
+			st.Close()
+			t.Fatal(err)
+		}
+	}
+	st.Close()
+	var deny atomic.Bool
+	a.approver = approve.Func(func(context.Context, string) error {
+		if deny.Load() {
+			return approve.ErrNotVerified
+		}
+		return nil
+	})
+	a.startBroker(t)
+	before := a.do(t, "fingerprint")
+	commandFails(t, a, "test/missing", "delete", "test/one", "test/missing")
+	if a.do(t, "fingerprint") != before {
+		t.Fatal("delete with an unknown name changed the vault")
+	}
+	deny.Store(true)
+	commandFails(t, a, "bị từ chối", "delete", "test/one", "test/two")
+	if a.do(t, "fingerprint") != before {
+		t.Fatal("denied delete changed the vault")
+	}
+	deny.Store(false)
+	if out := a.do(t, "delete", "test/one", "test/two"); !strings.Contains(out, "2 secret: test/one, test/two") {
+		t.Fatalf("incorrect deletion summary: %q", out)
+	}
+	if out := a.do(t, "list"); strings.Contains(out, "test/one") || strings.Contains(out, "test/two") || !strings.Contains(out, "test/keep") {
+		t.Fatalf("delete did not remove exactly the requested names: %q", out)
+	}
 }
 
 func TestCommandUsage(t *testing.T) {
