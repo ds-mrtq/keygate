@@ -72,6 +72,13 @@ func sameJSON(a, b []byte) bool {
 	return json.Unmarshal(a, &x) == nil && json.Unmarshal(b, &y) == nil && reflect.DeepEqual(x, y)
 }
 
+func checkRequest(req wire.Request, cmd, args string) error {
+	if req.Cmd != cmd || (args == "" && len(req.Args) != 0) || (args != "" && !sameJSON(req.Args, []byte(args))) {
+		return fmt.Errorf("request = %s %s; want %s %s", req.Cmd, req.Args, cmd, args)
+	}
+	return nil
+}
+
 func TestRequestsAndResults(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -87,6 +94,15 @@ func TestRequestsAndResults(t *testing.T) {
 		want                  any
 	}{
 		{"status", "status", "", `{"unlocked":true,"device":"dev","epoch":7}`, func(c *brokerclient.Client) (any, error) { return c.Status(context.Background()) }, api.Status{Unlocked: true, Device: "dev", Epoch: 7}},
+		{"session-status", "status", "", `{"unlocked":true,"device":"dev","epoch":7,"session":true,"session_id":"fake-session","pending":2,"approvers":1}`, func(c *brokerclient.Client) (any, error) {
+			return c.StatusFull(context.Background())
+		}, wire.StatusFull{Status: api.Status{Unlocked: true, Device: "dev", Epoch: 7}, Session: true, SessionID: "fake-session", Pending: 2, Approvers: 1}},
+		{"session-start", "session-start", "", "", func(c *brokerclient.Client) (any, error) { return nil, c.SessionStart(context.Background()) }, nil},
+		{"session-end", "session-end", "", "", func(c *brokerclient.Client) (any, error) { return nil, c.SessionEnd(context.Background()) }, nil},
+		{"lock", "lock", "", "", func(c *brokerclient.Client) (any, error) { return nil, c.Lock(context.Background()) }, nil},
+		{"policy-apply", "policy-apply", "", `{"hash":"fake-policy-hash","grants":2}`, func(c *brokerclient.Client) (any, error) {
+			return c.PolicyApply(context.Background())
+		}, wire.PolicyResult{Hash: "fake-policy-hash", Grants: 2}},
 		{"list", "list", "", `[{"name":"app/key","env":"dev","kind":"env"}]`, func(c *brokerclient.Client) (any, error) { return c.List(context.Background()) }, []api.SecretInfo{{Name: "app/key", Env: "dev", Kind: "env"}}},
 		{"empty-list", "list", "", "[]", func(c *brokerclient.Client) (any, error) { return c.List(context.Background()) }, []api.SecretInfo{}},
 		{"grant", "grant", string(grantArgs), `{"secret":"app/key","pattern":"tool *","approval":"none"}`, func(c *brokerclient.Client) (any, error) {
@@ -118,8 +134,8 @@ func TestRequestsAndResults(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := fakeBroker(t, func(conn net.Conn, req wire.Request) error {
-				if req.Cmd != tt.cmd || (tt.args == "" && len(req.Args) != 0) || (tt.args != "" && !sameJSON(req.Args, []byte(tt.args))) {
-					return fmt.Errorf("request = %s %s; want %s %s", req.Cmd, req.Args, tt.cmd, tt.args)
+				if err := checkRequest(req, tt.cmd, tt.args); err != nil {
+					return err
 				}
 				f := wire.Frame{T: wire.FrameOK, Data: json.RawMessage(tt.data)}
 				if tt.cmd == "run" || tt.cmd == "resolve" {
@@ -177,6 +193,42 @@ func TestBrokerError(t *testing.T) {
 	var be *brokerclient.Error
 	if !errors.As(err, &be) || be.Code != "denied" || be.Msg != "approval denied" || err.Error() != be.Msg {
 		t.Fatalf("got %T %v; want broker Error with code and message", err, err)
+	}
+}
+
+func TestApprovalCommandsDoNotTreatProgressAsSuccess(t *testing.T) {
+	for _, tt := range []struct {
+		cmd, args, code, msg string
+		call                 func(*brokerclient.Client) error
+	}{
+		{"policy-apply", "", "pending", "phone approval pending", func(c *brokerclient.Client) error {
+			_, err := c.PolicyApply(context.Background())
+			return err
+		}},
+		{"reveal", `{"name":"app/key"}`, "denied", "local approval refused", func(c *brokerclient.Client) error {
+			return c.Reveal(context.Background(), "app/key")
+		}},
+	} {
+		t.Run(tt.cmd, func(t *testing.T) {
+			const waiting = "waiting for approval"
+			c := fakeBroker(t, func(conn net.Conn, req wire.Request) error {
+				if err := checkRequest(req, tt.cmd, tt.args); err != nil {
+					return err
+				}
+				_, err := fmt.Fprintf(conn, "{\"t\":\"note\",\"msg\":%q}\n{\"t\":\"err\",\"code\":%q,\"msg\":%q}\n", waiting, tt.code, tt.msg)
+				return err
+			})
+			var notes []string
+			c.Note = func(msg string) { notes = append(notes, msg) }
+			err := tt.call(c)
+			var brokerErr *brokerclient.Error
+			if !errors.As(err, &brokerErr) || brokerErr.Code != tt.code || brokerErr.Msg != tt.msg {
+				t.Fatalf("want broker error %q with message %q, got %#v", tt.code, tt.msg, err)
+			}
+			if !reflect.DeepEqual(notes, []string{waiting}) {
+				t.Fatalf("want only the progress note, got %q", notes)
+			}
+		})
 	}
 }
 
