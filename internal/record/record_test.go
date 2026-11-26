@@ -4,10 +4,14 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"keygate/internal/kcrypto"
 )
 
 type vecFile struct {
@@ -117,6 +121,87 @@ func TestTombstoneHasNoValue(t *testing.T) {
 	p, err := r.Decrypt(vk)
 	if err != nil || p.Value != "" || p.Name != "n" {
 		t.Fatalf("%+v %v", p, err)
+	}
+}
+
+func TestRecordBindsMetadata(t *testing.T) {
+	key := kcrypto.NewVaultKey()
+	pub, priv := kcrypto.GenerateSignKey()
+	r := Record{V: 1, Vault: kcrypto.NewVaultID(), Item: kcrypto.NewItemID(), Dev: kcrypto.NewDeviceID(), Seq: 7, Epoch: 2, Op: OpPut,
+		Parent: StrPtr(kcrypto.SHA256Ref([]byte("fake-parent"))), Prev: StrPtr(kcrypto.SHA256Ref([]byte("fake-previous"))),
+		Merge: []string{kcrypto.SHA256Ref([]byte("fake-merge"))}}
+	want := Plain{Name: "test/token", Value: "fake-record-value", EnvName: "TEST_TOKEN"}
+	if err := r.Encrypt(key, want); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Sign(priv); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Verify(pub); err != nil {
+		t.Fatalf("valid signature: %v", err)
+	}
+	if got, err := r.Decrypt(key); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("valid record did not recover the original payload: %v", err)
+	}
+	otherHash := kcrypto.SHA256Ref([]byte("fake-other-record"))
+	for _, tc := range []struct {
+		name        string
+		change      func(*Record)
+		bindsCipher bool
+	}{
+		{"vault", func(r *Record) { r.Vault = kcrypto.NewVaultID() }, true},
+		{"item", func(r *Record) { r.Item = kcrypto.NewItemID() }, true},
+		{"parent", func(r *Record) { r.Parent = StrPtr(otherHash) }, true},
+		{"device", func(r *Record) { r.Dev = kcrypto.NewDeviceID() }, true},
+		{"sequence", func(r *Record) { r.Seq++ }, true},
+		{"epoch", func(r *Record) { r.Epoch++ }, true},
+		{"merge", func(r *Record) { r.Merge = []string{otherHash} }, false},
+		{"previous", func(r *Record) { r.Prev = StrPtr(otherHash) }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			changed := r
+			tc.change(&changed)
+			if err := changed.Verify(pub); !errors.Is(err, kcrypto.ErrBadSignature) {
+				t.Fatalf("want ErrBadSignature, got %v", err)
+			}
+			if tc.bindsCipher {
+				if got, err := changed.Decrypt(key); !errors.Is(err, kcrypto.ErrDecrypt) || !reflect.DeepEqual(got, Plain{}) {
+					t.Fatalf("changed metadata must return ErrDecrypt without a payload, got %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestDecryptRejectsInvalidPlaintext(t *testing.T) {
+	key := kcrypto.NewVaultKey()
+	const put = `{"name":"test/token","value":"fake-record-value"}`
+	for _, tc := range []struct {
+		name, op, payload string
+		valid             bool
+	}{
+		{"valid put", OpPut, put, true},
+		{"unknown field", OpPut, `{"name":"test/token","value":"fake-record-value","unexpected":true}`, false},
+		{"value in tombstone", OpTombstone, put, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := Record{V: 1, Vault: kcrypto.NewVaultID(), Item: kcrypto.NewItemID(), Dev: kcrypto.NewDeviceID(), Seq: 1, Epoch: 1, Op: tc.op}
+			nonce := kcrypto.RandBytes(kcrypto.NonceSize)
+			itemKey := kcrypto.ItemKey(key, r.Vault, r.Epoch, r.Item)
+			ct, err := kcrypto.Seal(itemKey, nonce, []byte(tc.payload), r.AAD())
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.Nonce, r.CT = kcrypto.B64(nonce), kcrypto.B64(ct)
+			got, err := r.Decrypt(key)
+			if tc.valid {
+				if err != nil || got.Name != "test/token" || got.Value != "fake-record-value" {
+					t.Fatalf("valid plaintext did not round trip: %v", err)
+				}
+			} else if !errors.Is(err, kcrypto.ErrDecrypt) || !reflect.DeepEqual(got, Plain{}) {
+				t.Fatalf("invalid plaintext must return ErrDecrypt without a payload, got %v", err)
+			}
+		})
 	}
 }
 
