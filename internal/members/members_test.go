@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"maps"
+	"reflect"
 	"testing"
 
 	"keygate/internal/kcrypto"
@@ -85,6 +86,68 @@ func TestReplayRejects(t *testing.T) {
 	mod.Body = kcrypto.B64([]byte(`{"dev":"dev_aaaaaaaaaa","label":"x","ed_pub":"","x_pub":""}`))
 	if _, err := Replay(lines([]*Event{evs[0], &mod})); err == nil {
 		t.Fatal("modified body accepted")
+	}
+}
+
+func TestCloneIsolatesMembershipUpdates(t *testing.T) {
+	events, owner, deviceKey, recoveryKey, vaultKey := build(t)
+	replay := func() *State {
+		t.Helper()
+		st, err := Replay(lines(events))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+	live, want := replay(), replay()
+	staged := live.Clone()
+	if !reflect.DeepEqual(staged, want) {
+		t.Fatal("clone did not preserve the replayed state")
+	}
+	holder := want.Active()[0].ID
+	approver := approverBody()
+	prev := events[len(events)-1]
+	apply := func(typ string, body any) {
+		t.Helper()
+		event, err := New(staged.Vault, staged.Count, prev, typ, body, owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := staged.Apply(event); err != nil {
+			t.Fatalf("apply %s to clone: %v", typ, err)
+		}
+		prev = event
+	}
+	apply(TypeAdd, approver)
+	apply(TypeRevoke, RevokeBody{Dev: holder, Reason: "retired"})
+	if !staged.PendingEpoch || len(staged.KeyHolders()) != 0 {
+		t.Fatal("staged revocation did not take effect")
+	}
+	if got := staged.Approvers(); len(got) != 1 || got[0].ID != approver.Dev {
+		t.Fatal("staged approver was not added")
+	}
+	nextKey := kcrypto.NewVaultKey()
+	epoch, err := NewEpochBody(staged.Vault, 2, nextKey, []Recipient{{RecoveryRcpt, staged.RecoveryPub}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(TypeEpoch, epoch)
+	if got, err := staged.UnwrapKey(2, RecoveryRcpt, recoveryKey); err != nil || !bytes.Equal(got, nextKey) {
+		t.Fatalf("staged rotation did not set the new vault key: %v", err)
+	}
+	if got, err := live.UnwrapKey(1, holder, deviceKey); err != nil || !bytes.Equal(got, vaultKey) {
+		t.Fatalf("staged update affected the live vault key: %v", err)
+	}
+	if !reflect.DeepEqual(live, want) {
+		t.Fatal("applying signed updates to the clone changed live membership")
+	}
+
+	staged.OwnerPub[0] ^= 1
+	staged.ArgonSalt[0] ^= 1
+	staged.Devices[holder].EdPub[0] ^= 1
+	delete(staged.Wraps[1], holder)
+	if !reflect.DeepEqual(live, want) {
+		t.Fatal("editing cloned key metadata or wraps changed live membership")
 	}
 }
 
