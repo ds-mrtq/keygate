@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -92,5 +93,78 @@ func TestEmptyVerify(t *testing.T) {
 	l := Open(filepath.Join(d, "x.jsonl"), filepath.Join(d, "a.head"), []byte("k"))
 	if n, err := l.Verify(); n != 0 || err != nil {
 		t.Fatal(n, err)
+	}
+}
+
+func TestAnchorAfterInterruptedAppend(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		anchored int
+		wantErr  error
+	}{
+		{"one entry ahead", 2, nil},
+		{"two entries ahead", 1, ErrTruncated},
+		{"missing anchor", 0, ErrTruncated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path, head := filepath.Join(dir, "ledger.jsonl"), filepath.Join(dir, "audit.head")
+			l := Open(path, head, []byte("synthetic audit MAC key"))
+			events := []string{EvGrant, EvRun, EvDeny}
+			var savedHead []byte
+			for i, event := range events {
+				if err := l.Append(Entry{Event: event}); err != nil {
+					t.Fatal(err)
+				}
+				if i+1 == tc.anchored {
+					var err error
+					savedHead, err = os.ReadFile(head)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+
+			// Leave the fully written ledger with only the older anchor on disk.
+			if tc.anchored == 0 {
+				if err := os.Remove(head); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(head, savedHead, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			es, err := l.ShowVerified(time.Time{})
+			if tc.wantErr == nil {
+				if err != nil || len(es) != len(events) || es[len(events)-1].Event != EvDeny {
+					t.Fatalf("show with one complete entry ahead: got %v, %v", es, err)
+				}
+				if err := l.Append(Entry{Event: EvGrantRevoke}); err != nil {
+					t.Fatalf("append after interrupted anchor update: %v", err)
+				}
+				if n, err := l.Verify(); err != nil || n != len(events)+1 {
+					t.Fatalf("verify after append: got %d, %v; want %d verified entries", n, err, len(events)+1)
+				}
+				return
+			}
+
+			if len(es) != 0 || !errors.Is(err, tc.wantErr) {
+				t.Fatalf("show returned %d entries, %v; want no entries and %v", len(es), err, tc.wantErr)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := l.Append(Entry{Event: EvGrantRevoke}); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("append with invalid anchor: got %v, want %v", err, tc.wantErr)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("rejected append modified the ledger")
+			}
+		})
 	}
 }
