@@ -117,6 +117,7 @@ func TestLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	un2()
+	un2() // Repeating a release must not take away the first caller's lock.
 	if _, err := os.Stat(p); err != nil {
 		t.Fatal("lock released too early")
 	}
@@ -135,6 +136,45 @@ func TestLock(t *testing.T) {
 	os.WriteFile(p, []byte(itoa(os.Getppid())+"\n"), 0o600)
 	if _, err := Lock(p); !errors.Is(err, ErrLocked) {
 		t.Fatalf("want ErrLocked, got %v", err)
+	}
+}
+
+func TestLockAcquisitionAfterFailure(t *testing.T) {
+	for _, scenario := range []string{"missing parent", "malformed PID"} {
+		t.Run(scenario, func(t *testing.T) {
+			parent := filepath.Join(t.TempDir(), "vault")
+			path := filepath.Join(parent, "lock")
+			if scenario == "missing parent" {
+				un, err := Lock(path)
+				if un != nil {
+					defer un()
+				}
+				if un != nil || !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("acquiring without a parent: got release=%t, err=%v; want only a missing-path error", un != nil, err)
+				}
+			}
+			if err := os.Mkdir(parent, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "malformed PID" {
+				if err := os.WriteFile(path, []byte("not-a-pid\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			un, err := Lock(path)
+			if err != nil || un == nil {
+				t.Fatalf("acquiring a usable lock path: got release=%t, err=%v", un != nil, err)
+			}
+			t.Cleanup(un)
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != itoa(os.Getpid())+"\n" {
+				t.Fatalf("lock did not record the current process: got %q, err=%v", data, err)
+			}
+			un()
+			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("lock was not removed on release: %v", err)
+			}
+		})
 	}
 }
 
