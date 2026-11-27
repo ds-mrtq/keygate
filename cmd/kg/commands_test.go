@@ -25,6 +25,7 @@ import (
 	"keygate/internal/approve"
 	"keygate/internal/audit"
 	"keygate/internal/members"
+	"keygate/internal/policy"
 	"keygate/internal/record"
 	"keygate/internal/store"
 )
@@ -347,6 +348,49 @@ func TestGrantRevealCommands(t *testing.T) {
 		t.Fatal("denied reveal leaked value")
 	}
 	a.do(t, "lock")
+}
+
+func TestResolveCLIRequiresPinnedPolicyAndMasksRenderedValue(t *testing.T) {
+	a, _, _ := commandVault(t)
+	const name, value = "test/template", "fake-template-value"
+	st, err := a.openStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.Put("", record.Plain{Name: name, Kind: "template", Value: value})
+	st.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const template = "value=${secret:" + name + "}\n"
+	path := filepath.Join(t.TempDir(), "test.conf")
+	if err := os.WriteFile(path, []byte(template), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(a.home, "policy.yaml"), []byte(`grants:
+  test/template:
+    kind: template
+    allow_commands: ["go run ./testdata/printenv --read-file KG_TEST_RESOLVED"]
+    approval: user-presence
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.startBroker(t)
+	child := []string{"--", "go", "run", "./testdata/printenv", "--read-file", "KG_TEST_RESOLVED"}
+	commandFails(t, a, "kg resolve <file>", append([]string{"resolve"}, child...)...)
+	args := append([]string{"resolve", path, "--into", "KG_TEST_RESOLVED"}, child...)
+	commandFails(t, a, policy.ErrNoPin.Error(), args...)
+	if a.out.Len() != 0 || strings.Contains(a.errb.String(), value) {
+		t.Fatal("unapproved template run produced child output or disclosed the value")
+	}
+	a.do(t, "policy", "apply")
+	out := a.do(t, args...)
+	if strings.TrimSpace(out) != "value=[kg:"+name+"]" || strings.Contains(out+a.errb.String(), value) {
+		t.Fatal("resolved file output was not rendered and redacted")
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != template {
+		t.Fatal("resolve changed the source template")
+	}
 }
 
 func TestSyncCLIRequiresMatchingChannelFingerprints(t *testing.T) {
