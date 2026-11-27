@@ -1,10 +1,12 @@
 package fsx
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 )
 
@@ -60,6 +62,47 @@ func TestWriteAtomicCleansUpFailedReplacement(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Name() != filepath.Base(path) {
 		t.Fatal("failed replacement left a temporary file behind")
+	}
+}
+
+func TestAppendLinesPreservesLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "log", "test.kgl")
+	want := [][]byte{[]byte(`{"seq":1}`), []byte(`{"seq":2}`), []byte(`{"seq":3}`)}
+	if err := AppendLines(path, want[:2]...); err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendLines(path, want[2]); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadLines(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.EqualFunc(got, want, bytes.Equal) {
+		t.Fatalf("log records = %q, want %q", got, want)
+	}
+	got, repaired, err := ReadLinesRepair(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repaired || !slices.EqualFunc(got, want, bytes.Equal) {
+		t.Fatalf("reopening log yielded %q (repaired=%t), want all records without repair", got, repaired)
+	}
+}
+
+func TestLogIORejectsDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.kgl")
+	if got, err := ReadLines(path); err != nil || len(got) != 0 {
+		t.Fatalf("missing log = %q, %v; want empty without error", got, err)
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadLines(path); err == nil || len(got) != 0 {
+		t.Fatalf("log path is a directory: got %q, %v; want a read error without records", got, err)
+	}
+	if err := AppendLines(path, []byte(`{"seq":1}`)); err == nil {
+		t.Fatal("appending to a directory should return an error")
 	}
 }
 
