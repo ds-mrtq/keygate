@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,41 @@ import (
 
 	"keygate/internal/allowlist"
 )
+
+func TestHashCLIPrintsOnlyUsablePolicyPins(t *testing.T) {
+	dir := t.TempDir()
+	a := newTestApp(t, dir)
+	path := filepath.Join(dir, "test input.bin")
+	for _, data := range []string{"synthetic\x00input\r\n", "synthetic\x00input\n"} {
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		want := fmt.Sprintf("sha256:%x\n", sha256.Sum256([]byte(data)))
+		if out := a.do(t, "hash", path); out != want || a.errb.Len() != 0 {
+			t.Fatalf("hash should emit exactly %q: stdout=%q stderr=%q", want, out, a.errb.String())
+		}
+	}
+	if err := os.Truncate(path, (16<<20)+1); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"no arguments", []string{"hash"}, "kg hash <file>"},
+		{"directory", []string{"hash", dir}, "không phải file thường"},
+		{"oversized", []string{"hash", path}, "file lớn hơn 16 MiB"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a.out.Reset()
+			a.errb.Reset()
+			if code := a.run(tc.args); code != 1 || a.out.Len() != 0 || !strings.Contains(a.errb.String(), tc.want) {
+				t.Fatalf("expected exit 1 with no pin and error %q: exit=%d stdout=%q stderr=%q", tc.want, code, a.out.String(), a.errb.String())
+			}
+		})
+	}
+}
 
 func TestPolicyPinDryRunAndWrite(t *testing.T) {
 	d := t.TempDir()
