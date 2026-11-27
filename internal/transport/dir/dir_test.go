@@ -85,6 +85,60 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPushMemberRefusesInvalidAppendsWithoutChangingLog(t *testing.T) {
+	const first = `{"fake":0}`
+	const next = `{"fake":1}`
+	ctx := context.Background()
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	for _, tc := range []struct {
+		name string
+		ctx  context.Context
+		n    int
+		line string
+		want error
+	}{
+		{"canceled", canceled, 1, next, context.Canceled},
+		{"negative index", ctx, -1, next, nil},
+		{"duplicate index", ctx, 0, next, transport.ErrExists},
+		{"skipped index", ctx, 2, next, nil},
+		{"empty event", ctx, 1, "", nil},
+		{"line feed", ctx, 1, next + "\n", nil},
+		{"carriage return", ctx, 1, next + "\r", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			d, err := New(root, "dev_a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := d.PushMember(ctx, 0, []byte(first)); err != nil {
+				t.Fatal(err)
+			}
+			assertLog := func(want string) {
+				t.Helper()
+				got, err := os.ReadFile(filepath.Join(root, "members.kgl"))
+				if err != nil || string(got) != want {
+					t.Fatalf("membership log = %q, err=%v; want %q", got, err, want)
+				}
+			}
+			err = d.PushMember(tc.ctx, tc.n, []byte(tc.line))
+			if tc.want != nil {
+				if !errors.Is(err, tc.want) {
+					t.Errorf("push error = %v, want %v", err, tc.want)
+				}
+			} else if err == nil || errors.Is(err, transport.ErrExists) {
+				t.Errorf("push error = %v, want a rejection distinct from a duplicate", err)
+			}
+			assertLog(first + "\n")
+			if err := d.PushMember(ctx, 1, []byte(next)); err != nil {
+				t.Fatalf("valid next event was rejected: %v", err)
+			}
+			assertLog(first + "\n" + next + "\n")
+		})
+	}
+}
+
 func TestTornTailAndSymlink(t *testing.T) {
 	root := t.TempDir()
 	ctx := context.Background()
