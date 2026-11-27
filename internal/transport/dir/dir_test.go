@@ -129,6 +129,67 @@ func TestTornTailAndSymlink(t *testing.T) {
 	}
 }
 
+func TestCheckpointPublicationFailures(t *testing.T) {
+	const device = "dev_a"
+	const existing = "synthetic existing data"
+	body := []byte(`{"checkpoint":1}`)
+	ctx := context.Background()
+	newChannel := func(t *testing.T) (*Dir, string) {
+		t.Helper()
+		root := t.TempDir()
+		d, err := New(root, device)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d, filepath.Join(root, "checkpoints")
+	}
+	assertPreserved := func(t *testing.T, path string) {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != existing {
+			t.Fatalf("existing data was not preserved: got %q, err=%v", data, err)
+		}
+	}
+
+	t.Run("checkpoints path is a file", func(t *testing.T) {
+		d, path := newChannel(t)
+		if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.PushCheckpoint(ctx, device, body); err == nil {
+			t.Fatal("push reported success when the checkpoints directory is a file")
+		}
+		if _, err := d.Pull(ctx, transport.Since{}); err == nil {
+			t.Fatal("pull treated an invalid checkpoints directory as an empty channel")
+		}
+		assertPreserved(t, path)
+	})
+
+	t.Run("checkpoint path is a directory", func(t *testing.T) {
+		d, parent := newChannel(t)
+		const checkpoint = device + ".json"
+		path := filepath.Join(parent, checkpoint)
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		sentinel := filepath.Join(path, "keep")
+		if err := os.WriteFile(sentinel, []byte(existing), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.PushCheckpoint(ctx, device, body); err == nil {
+			t.Fatal("push reported success after checkpoint replacement failed")
+		}
+		assertPreserved(t, sentinel)
+		entries, err := os.ReadDir(parent)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 1 || entries[0].Name() != checkpoint {
+			t.Fatalf("failed push left extra entries in the checkpoints directory: %v", entries)
+		}
+	})
+}
+
 func TestOversizedChannelFiles(t *testing.T) {
 	const limit = 64 << 20
 	const prefix = "{\"fake\":1}\n"
