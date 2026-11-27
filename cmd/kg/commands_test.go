@@ -141,6 +141,70 @@ func TestDeviceRevokeCommand(t *testing.T) {
 	}
 }
 
+func TestDeviceRevokeRequiresSuccessfulInitialSync(t *testing.T) {
+	for _, tc := range []struct {
+		name, role string
+		epochDelta uint64
+	}{
+		{name: "key holder", epochDelta: 1},
+		{name: "approver", role: members.RoleApprover},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, paper, shared := commandVault(t)
+			peer := store.NewIdentity("test-peer").Public()
+			peer.Role = tc.role
+			a.secrets = []string{commandMaster, paper}
+			a.lines = []string{"yes"}
+			a.do(t, "device", "add", store.RequestCode(peer))
+			before, err := store.ReadMembers(shared)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkMembership := func(revoked bool, epoch uint64) {
+				t.Helper()
+				for _, home := range []string{a.home, shared} {
+					state, err := store.ReadMembers(home)
+					if err != nil {
+						t.Fatal(err)
+					}
+					dev := state.Devices[peer.Dev]
+					if dev == nil || dev.Revoked != revoked || state.Epoch != epoch {
+						t.Fatalf("%s: expected device present, revoked=%t and epoch=%d, got device %+v and epoch %d", home, revoked, epoch, dev, state.Epoch)
+					}
+				}
+			}
+			checkpointDir := filepath.Join(shared, "checkpoints")
+			backup := checkpointDir + ".backup"
+			if err := os.Rename(checkpointDir, backup); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(checkpointDir, []byte("synthetic channel obstruction"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"device", "revoke", peer.Dev}
+			if tc.role != members.RoleApprover {
+				a.secrets = []string{commandMaster, paper}
+			}
+			commandFails(t, a, "đồng bộ trước khi thu hồi thất bại", args...)
+			if a.out.Len() != 0 {
+				t.Fatalf("failed revocation emitted stdout: %q", a.out.String())
+			}
+			checkMembership(false, before.Epoch)
+			if err := os.Remove(checkpointDir); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(backup, checkpointDir); err != nil {
+				t.Fatal(err)
+			}
+			if tc.role != members.RoleApprover {
+				a.secrets = []string{commandMaster, paper}
+			}
+			a.do(t, args...)
+			checkMembership(true, before.Epoch+tc.epochDelta)
+		})
+	}
+}
+
 func TestApproveCommand(t *testing.T) {
 	a, _, _ := commandVault(t)
 	st, err := a.openStore()
