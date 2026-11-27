@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -346,6 +347,47 @@ func TestGrantRevealCommands(t *testing.T) {
 		t.Fatal("denied reveal leaked value")
 	}
 	a.do(t, "lock")
+}
+
+func TestSyncCLIRequiresMatchingChannelFingerprints(t *testing.T) {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git not installed")
+	}
+	a, _, _ := commandVault(t)
+	gitDir := t.TempDir()
+	if out, err := exec.Command(git, "-C", gitDir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("could not initialize local git channel: %v: %s", err, out)
+	}
+	a.do(t, "sync", "--via", "git", "--git-dir", gitDir)
+
+	// The next sync will publish this record to dir, leaving git one record behind.
+	st, err := a.openStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.Put("", record.Plain{Name: "test/sync", Kind: "env", EnvName: "KG_TEST_TOKEN", Value: "fake-sync-value"})
+	st.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.startBroker(t)
+
+	args := []string{"sync", "--via", "dir", "--verify-via", "git"}
+	commandFails(t, a, store.ErrFork.Error(), args...)
+	if a.out.Len() != 0 {
+		t.Fatalf("failed verification printed a success summary: %q", a.out.String())
+	}
+	if !strings.Contains(a.errb.String(), "dir says") || !strings.Contains(a.errb.String(), "git says") {
+		t.Fatalf("mismatch did not identify both channels: %q", a.errb.String())
+	}
+	const verified = "Đã đối chiếu fingerprint với kênh git: khớp."
+	if out := a.do(t, "sync", "--via", "git"); !strings.Contains(out, "Đồng bộ qua git:") || strings.Contains(out, "Đã đối chiếu") {
+		t.Fatalf("expected git sync without verification, got %q", out)
+	}
+	if out := a.do(t, args...); !strings.Contains(out, "Đồng bộ qua dir:") || !strings.Contains(out, verified) {
+		t.Fatalf("expected successful dir sync verified against git, got %q", out)
+	}
 }
 
 func TestMCPUsesBrokerWithoutExposingValues(t *testing.T) {
