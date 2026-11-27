@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -177,9 +178,11 @@ func TestUserPresencePlatform(t *testing.T) {
 	}
 }
 
-func TestResolveConflictCommand(t *testing.T) {
+func TestListAndResolveConflictCommands(t *testing.T) {
 	for _, choice := range []string{"device", "hash"} {
 		t.Run(choice, func(t *testing.T) {
+			const name = "test/conflict"
+			values := []string{"fake-local", "fake-peer"}
 			a, paper, shared := commandVault(t)
 			b := newTestApp(t, filepath.Join(t.TempDir(), "peer"))
 			out := b.do(t, "device", "request", "--label", "peer")
@@ -203,7 +206,7 @@ func TestResolveConflictCommand(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r, err := st.Put("", record.Plain{Name: "test/conflict", Value: "fake-base"})
+			r, err := st.Put("", record.Plain{Name: name, Value: "fake-base"})
 			st.Close()
 			if err != nil {
 				t.Fatal(err)
@@ -211,45 +214,79 @@ func TestResolveConflictCommand(t *testing.T) {
 			a.do(t, "sync")
 			b.do(t, "sync")
 			var keep string
+			var wantHeads []string
 			for i, app := range []*testApp{a, b} {
 				st, err := app.openStore()
 				if err != nil {
 					t.Fatal(err)
 				}
-				r, err := st.Put(r.Item, record.Plain{Name: "test/conflict", Value: []string{"fake-local", "fake-peer"}[i]})
+				head, err := st.Put(r.Item, record.Plain{Name: name, Value: values[i]})
+				st.Close()
 				if err != nil {
-					st.Close()
 					t.Fatal(err)
 				}
+				hash, err := head.Hash()
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantHeads = append(wantHeads, fmt.Sprintf("thiết bị %s seq %d %s %s", head.Dev, head.Seq, head.Op, hash))
 				if i == 1 {
-					keep = st.ID.Dev
+					keep = head.Dev
 					if choice == "hash" {
-						keep, err = r.Hash()
-						if err != nil {
-							t.Fatal(err)
-						}
+						keep = hash
 					}
 				}
-				st.Close()
 			}
+			slices.Sort(wantHeads)
 			a.do(t, "sync")
 			b.do(t, "sync")
 			a.do(t, "sync")
-			commandFails(t, a, "", "resolve-conflict", "test/conflict", "--keep", "unknown")
+
+			checkConflicts := func(t *testing.T, app *testApp) {
+				t.Helper()
+				out := app.do(t, "conflicts")
+				for _, value := range values {
+					if strings.Contains(out, value) || strings.Contains(app.errb.String(), value) {
+						t.Fatal("conflict listing exposed a secret value")
+					}
+				}
+				lines := strings.Split(strings.TrimSpace(out), "\n")
+				if lines[0] != name {
+					t.Fatalf("conflict listing did not name %q", name)
+				}
+				heads := lines[1:]
+				for i := range heads {
+					heads[i] = strings.TrimSpace(heads[i])
+				}
+				slices.Sort(heads)
+				if !slices.Equal(heads, wantHeads) {
+					t.Fatalf("conflict heads = %q, want %q", heads, wantHeads)
+				}
+			}
+			t.Run("local listing", func(t *testing.T) { checkConflicts(t, a) })
+			t.Run("broker listing", func(t *testing.T) {
+				b.startBroker(t)
+				checkConflicts(t, b)
+			})
+
+			commandFails(t, a, "", "resolve-conflict", name, "--keep", "unknown")
 			a.approver = approve.Func(func(context.Context, string) error { return approve.ErrNotVerified })
-			commandFails(t, a, "", "resolve-conflict", "test/conflict", "--keep", keep)
+			commandFails(t, a, "", "resolve-conflict", name, "--keep", keep)
 			a.approver = approve.Func(func(context.Context, string) error { return nil })
-			a.do(t, "resolve-conflict", "test/conflict", "--keep", keep)
+			a.do(t, "resolve-conflict", name, "--keep", keep)
 			st, err = a.openStore()
 			if err != nil {
 				t.Fatal(err)
 			}
 			p, _, err := st.Get(r.Item)
 			st.Close()
-			if err != nil || p.Value != "fake-peer" {
+			if err != nil || p.Value != values[1] {
 				t.Fatal("wrong conflict head selected")
 			}
-			commandFails(t, a, "không có xung đột", "resolve-conflict", "test/conflict", "--keep", keep)
+			if got := strings.TrimSpace(a.do(t, "conflicts")); got != "Không có xung đột." {
+				t.Fatal("resolved conflict was still listed")
+			}
+			commandFails(t, a, "không có xung đột", "resolve-conflict", name, "--keep", keep)
 		})
 	}
 }
