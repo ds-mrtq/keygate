@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"keygate/internal/approve"
+	"keygate/internal/audit"
 	"keygate/internal/members"
 	"keygate/internal/record"
 	"keygate/internal/store"
@@ -342,6 +344,47 @@ func TestGrantRevealCommands(t *testing.T) {
 		t.Fatal("denied reveal leaked value")
 	}
 	a.do(t, "lock")
+}
+
+func TestAuditRejectsDamagedLedger(t *testing.T) {
+	a, _, _ := commandVault(t)
+	path := filepath.Join(a.home, "audit", "ledger.jsonl")
+	anchor := filepath.Join(a.home, "state", "audit.head")
+	st, err := a.openStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := audit.Open(path, anchor, st.LocalMacKey())
+	st.Close()
+	const name, changed = "test/synthetic-audit-entry", "test/changed-audit-entry"
+	if err := ledger.Append(audit.Entry{Event: audit.EvGrant, Secret: name}); err != nil {
+		t.Fatal(err)
+	}
+	if out := a.do(t, "audit", "verify"); !strings.Contains(out, "Audit hợp lệ: 1 dòng") {
+		t.Fatalf("expected one verified entry, got %q", out)
+	}
+	if out := a.do(t, "audit", "show"); !strings.Contains(out, name) {
+		t.Fatalf("expected a visible entry before ledger damage, got %q", out)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte(name)) {
+		t.Fatal("expected synthetic entry in ledger fixture")
+	}
+	if err := os.WriteFile(path, bytes.Replace(raw, []byte(name), []byte(changed), 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, operation := range []string{"verify", "show"} {
+		t.Run(operation, func(t *testing.T) {
+			commandFails(t, a, "audit KHÔNG hợp lệ", "audit", operation)
+			if a.out.Len() != 0 || strings.Contains(a.errb.String(), name) || strings.Contains(a.errb.String(), changed) {
+				t.Fatal("failed audit command printed a success message or ledger content")
+			}
+		})
+	}
 }
 
 func TestStatusReportsApprovalState(t *testing.T) {
