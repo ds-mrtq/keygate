@@ -3,8 +3,10 @@ package dir
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"keygate/internal/transport"
@@ -124,5 +126,78 @@ func TestTornTailAndSymlink(t *testing.T) {
 	}
 	if _, err := a.Pull(ctx, transport.Since{}); err != nil {
 		t.Fatalf("pull must skip symlinks: %v", err)
+	}
+}
+
+func TestOversizedChannelFiles(t *testing.T) {
+	const limit = 64 << 20
+	const prefix = "{\"fake\":1}\n"
+	wantErr := fmt.Sprintf("file exceeds %d bytes", limit)
+	checkLimit := func(t *testing.T, err error) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), wantErr) {
+			t.Fatalf("error = %v, want %q", err, wantErr)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		path string
+		push func(context.Context, *Dir) error
+	}{
+		{name: "members", path: "members.kgl", push: func(ctx context.Context, d *Dir) error {
+			return d.PushMember(ctx, 1, []byte(`{"fake":2}`))
+		}},
+		{name: "log", path: "log/dev_a.kgl", push: func(ctx context.Context, d *Dir) error {
+			return d.PushLog(ctx, "dev_a", 2, []byte(`{"fake":2}`))
+		}},
+		{name: "checkpoint", path: "checkpoints/dev_a.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			d, err := New(root, "dev_a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, filepath.FromSlash(tc.path))
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(prefix), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Truncate(path, limit+1); err != nil {
+				t.Fatal(err)
+			}
+
+			ctx := context.Background()
+			snap, err := d.Pull(ctx, transport.Since{})
+			checkLimit(t, err)
+			if len(snap.Members) != 0 || len(snap.Logs) != 0 || len(snap.Checkpoints) != 0 {
+				t.Fatal("pull returned data from an oversized file")
+			}
+			if tc.push != nil {
+				checkLimit(t, tc.push(ctx, d))
+			}
+
+			f, err := os.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+			st, err := f.Stat()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if st.Size() != limit+1 {
+				t.Fatalf("rejected file was resized to %d bytes", st.Size())
+			}
+			var got [len(prefix)]byte
+			if _, err := f.ReadAt(got[:], 0); err != nil {
+				t.Fatal(err)
+			}
+			if string(got[:]) != prefix {
+				t.Fatal("rejected file's first record was overwritten")
+			}
+		})
 	}
 }
