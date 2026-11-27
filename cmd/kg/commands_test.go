@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"testing/iotest"
 	"time"
 
+	"keygate/internal/api"
 	"keygate/internal/approve"
 	"keygate/internal/audit"
 	"keygate/internal/members"
@@ -344,6 +346,90 @@ func TestGrantRevealCommands(t *testing.T) {
 		t.Fatal("denied reveal leaked value")
 	}
 	a.do(t, "lock")
+}
+
+func TestMCPUsesBrokerWithoutExposingValues(t *testing.T) {
+	a, _, _ := commandVault(t)
+	const name, env, value = "test/mcp", "test", "fake-mcp-secret-value"
+	st, err := a.openStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.Put("", record.Plain{Name: name, Kind: "env", Env: env, EnvName: "KG_TEST_TOKEN", Value: value})
+	st.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rules = `grants:
+  test/mcp:
+    kind: env
+    allow_commands: ["go version"]
+    approval: user-presence
+    ttl: 1h
+`
+	if err := os.WriteFile(filepath.Join(a.home, "policy.yaml"), []byte(rules), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var deny atomic.Bool
+	var refusals atomic.Int32
+	allow := a.approver
+	a.approver = approve.Func(func(ctx context.Context, prompt string) error {
+		if deny.Load() {
+			refusals.Add(1)
+			return approve.ErrNotVerified
+		}
+		return allow.Approve(ctx, prompt)
+	})
+	a.startBroker(t)
+	a.do(t, "policy", "apply")
+	a.do(t, "session", "end")
+	deny.Store(true)
+
+	client := newTestApp(t, a.home)
+	call := func(id, params string, wantErr bool) string {
+		t.Helper()
+		client.stdin = strings.NewReader(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"tools/call","params":%s}`+"\n", id, params))
+		out := client.do(t, "mcp")
+		if strings.Contains(out, value) || strings.Contains(client.errb.String(), value) {
+			t.Fatal("MCP exposed a secret value")
+		}
+		var reply struct {
+			JSONRPC string `json:"jsonrpc"`
+			ID      string `json:"id"`
+			Result  *struct {
+				IsError *bool `json:"isError"`
+				Content []struct{ Type, Text string }
+			}
+			Error json.RawMessage
+		}
+		if err := json.Unmarshal([]byte(out), &reply); err != nil {
+			t.Fatalf("invalid MCP response: %v", err)
+		}
+		if reply.JSONRPC != "2.0" || reply.ID != id || reply.Error != nil || reply.Result == nil {
+			t.Fatalf("wrong MCP response envelope for %q: %s", id, out)
+		}
+		r := reply.Result
+		if r.IsError == nil || *r.IsError != wantErr || len(r.Content) != 1 || r.Content[0].Type != "text" {
+			t.Fatalf("wrong MCP tool response for %q: %s", id, out)
+		}
+		return r.Content[0].Text
+	}
+	var list []api.SecretInfo
+	text := call("list", `{"name":"list_secrets"}`, false)
+	if err := json.Unmarshal([]byte(text), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Name != name || list[0].Env != env || list[0].Kind != "env" {
+		t.Fatalf("MCP list returned wrong metadata: %s", text)
+	}
+	text = call("grant", `{"name":"request_grant","arguments":{"secret":"test/mcp","command":["go","version"]}}`, true)
+	if refusals.Load() != 1 || !strings.Contains(text, approve.ErrNotVerified.Error()) {
+		t.Fatalf("MCP did not report the human refusal: %q (refusals: %d)", text, refusals.Load())
+	}
+	grants, err := client.client().Grants(context.Background())
+	if err != nil || len(grants) != 0 {
+		t.Fatalf("after denying the request, got %d active grants (err=%v)", len(grants), err)
+	}
 }
 
 func TestAuditRejectsDamagedLedger(t *testing.T) {
