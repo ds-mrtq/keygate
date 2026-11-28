@@ -623,6 +623,52 @@ func TestAuditRejectsDamagedLedger(t *testing.T) {
 	}
 }
 
+func TestSessionCLIRequiresBrokerConfirmation(t *testing.T) {
+	a, _, _ := commandVault(t)
+	sessionFails := func(want string, args ...string) {
+		t.Helper()
+		a.out.Reset()
+		a.errb.Reset()
+		code := a.run(append([]string{"session"}, args...))
+		if code != 1 || a.out.Len() != 0 || !strings.Contains(a.errb.String(), want) {
+			t.Fatalf("session %v: want exit 1, no stdout, and error %q; got exit %d, stdout=%q, stderr=%q",
+				args, want, code, a.out.String(), a.errb.String())
+		}
+	}
+	sessionFails("broker không chạy", "start")
+	sessionFails("broker không chạy", "end")
+
+	var deny atomic.Bool
+	a.approver = approve.Func(func(context.Context, string) error {
+		if deny.Load() {
+			return approve.ErrNotVerified
+		}
+		return nil
+	})
+	a.startBroker(t)
+	assertSession := func(want bool) {
+		t.Helper()
+		status, err := a.client().StatusFull(context.Background())
+		if err != nil || !status.Unlocked || status.Session != want {
+			t.Fatalf("want unlocked vault with session=%t, got unlocked=%t, session=%t, err=%v",
+				want, status.Unlocked, status.Session, err)
+		}
+	}
+	a.do(t, "session", "end")
+	assertSession(false)
+	deny.Store(true)
+	sessionFails("bị từ chối", "start")
+	assertSession(false)
+	deny.Store(false)
+	a.do(t, "session", "start")
+	assertSession(true)
+	sessionFails("dùng: kg session start | kg session end", "end", "extra")
+	assertSession(true)
+	deny.Store(true)
+	a.do(t, "session", "end")
+	assertSession(false)
+}
+
 func TestStatusReportsApprovalState(t *testing.T) {
 	a, _, _ := commandVault(t)
 	const name, value = "test/status", "fake-status-secret-value"
